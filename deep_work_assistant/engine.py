@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from statistics import median
@@ -65,6 +66,30 @@ class ReminderPlan:
             ('stretch', self.stretch_minutes),
             ('eat', self.eat_minutes),
         ]
+
+
+@dataclass(frozen=True)
+class LaptopUseProfile:
+    """Local-only understanding inferred from completed laptop sessions."""
+
+    dominant_category: str = 'general'
+    flow_style: str = 'balanced'
+    break_response_style: str = 'unknown'
+    top_apps: tuple[str, ...] = ()
+    suggested_plan: ReminderPlan = field(default_factory=ReminderPlan)
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            'dominant_category': self.dominant_category,
+            'flow_style': self.flow_style,
+            'break_response_style': self.break_response_style,
+            'top_apps': list(self.top_apps),
+            'suggested_plan': {
+                'hydration_minutes': self.suggested_plan.hydration_minutes,
+                'stretch_minutes': self.suggested_plan.stretch_minutes,
+                'eat_minutes': self.suggested_plan.eat_minutes,
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -144,6 +169,85 @@ class SessionSummary:
         )
 
 
+def _categorize_app(process_name: str) -> str:
+    name = process_name.lower()
+    if any(token in name for token in ('code', 'devenv', 'pycharm', 'cursor', 'terminal', 'powershell', 'cmd', 'bash')):
+        return 'coding'
+    if any(token in name for token in ('winword', 'word', 'obsidian', 'notion', 'onenote', 'excel', 'powerpnt')):
+        return 'writing-admin'
+    if any(token in name for token in ('chrome', 'edge', 'firefox', 'brave')):
+        return 'browser-research'
+    if any(token in name for token in ('teams', 'slack', 'discord', 'zoom', 'outlook')):
+        return 'communication'
+    if any(token in name for token in ('photoshop', 'illustrator', 'gimp', 'figma', 'penpot', 'blender')):
+        return 'creative'
+    return 'general'
+
+
+def analyze_laptop_use(history: Sequence[Any], window: int = 24) -> LaptopUseProfile:
+    sessions = [session for session in list(history)[-window:] if _session_value(session, 'duration_seconds', 0)]
+    if not sessions:
+        return LaptopUseProfile(suggested_plan=ReminderPlan(*DEFAULT_REMINDER_PLAN))
+
+    app_counts: Counter[str] = Counter()
+    category_minutes: Counter[str] = Counter()
+    durations: list[float] = []
+    reminder_outcomes: Counter[str] = Counter()
+
+    for session in sessions:
+        app = str(_session_value(session, 'primary_app', '') or 'unknown')
+        minutes = float(_session_value(session, 'duration_seconds', 0)) / 60.0
+        app_counts[app] += 1
+        category_minutes[_categorize_app(app)] += minutes
+        durations.append(minutes)
+        for reminder in _reminder_list(session):
+            outcome = str(reminder.get('outcome', '')).lower()
+            if outcome:
+                reminder_outcomes[outcome] += 1
+
+    dominant_category = category_minutes.most_common(1)[0][0] if category_minutes else 'general'
+    middle_duration = median(durations) if durations else 0
+    if middle_duration >= 135:
+        flow_style = 'deep-flow'
+    elif middle_duration <= 55:
+        flow_style = 'short-sprints'
+    else:
+        flow_style = 'balanced'
+
+    continued = reminder_outcomes['continued'] + reminder_outcomes['ignored']
+    breaks = reminder_outcomes['break']
+    if continued > breaks:
+        break_response_style = 'pushes-through-reminders'
+    elif breaks > continued:
+        break_response_style = 'breaks-on-reminder'
+    else:
+        break_response_style = 'unknown'
+
+    base_plan = build_adaptive_plan(sessions)
+    if break_response_style == 'pushes-through-reminders':
+        suggested_plan = ReminderPlan(
+            hydration_minutes=clamp(base_plan.hydration_minutes - 5, 40, 90),
+            stretch_minutes=clamp(base_plan.stretch_minutes - 15, 60, 165),
+            eat_minutes=clamp(base_plan.eat_minutes - 10, 110, 240),
+        )
+    elif break_response_style == 'breaks-on-reminder' and flow_style == 'short-sprints':
+        suggested_plan = ReminderPlan(
+            hydration_minutes=clamp(base_plan.hydration_minutes + 5, 45, 95),
+            stretch_minutes=clamp(base_plan.stretch_minutes + 10, 75, 175),
+            eat_minutes=base_plan.eat_minutes,
+        )
+    else:
+        suggested_plan = base_plan
+
+    return LaptopUseProfile(
+        dominant_category=dominant_category,
+        flow_style=flow_style,
+        break_response_style=break_response_style,
+        top_apps=tuple(app for app, _ in app_counts.most_common(5)),
+        suggested_plan=suggested_plan,
+    )
+
+
 def build_adaptive_plan(history: Sequence[Any], window: int = 12) -> ReminderPlan:
     sessions = list(history)[-window:]
     if not sessions:
@@ -194,9 +298,11 @@ class DeepWorkAssistant:
         start_idle_threshold_seconds: int = 180,
         stop_idle_threshold_seconds: int = 900,
         response_window_minutes: int = DEFAULT_RESPONSE_WINDOW_MINUTES,
+        laptop_use_profile: LaptopUseProfile | None = None,
         session_id_factory: Any | None = None,
     ) -> None:
-        self.reminder_plan = reminder_plan or ReminderPlan(*DEFAULT_REMINDER_PLAN)
+        self.reminder_plan = reminder_plan or (laptop_use_profile.suggested_plan if laptop_use_profile else ReminderPlan(*DEFAULT_REMINDER_PLAN))
+        self.laptop_use_profile = laptop_use_profile or LaptopUseProfile(suggested_plan=self.reminder_plan)
         self.start_streak_required = max(1, int(start_streak_required))
         self.stop_streak_required = max(1, int(stop_streak_required))
         self.start_idle_threshold_seconds = int(start_idle_threshold_seconds)
@@ -244,10 +350,11 @@ class DeepWorkAssistant:
                             {
                                 'stage': reminder.stage,
                                 'title': self._title_for_stage(reminder.stage),
-                                'message': self._message_for_stage(reminder.stage),
+                                'message': self._message_for_stage(reminder.stage, self.laptop_use_profile),
                                 'sent_at': _utc_iso(sample.captured_at),
                                 'due_at': _utc_iso(reminder.due_at),
                                 'session_id': session.session_id,
+                                'laptop_use_profile': self.laptop_use_profile.to_record(),
                             },
                         )
                     )
@@ -343,13 +450,28 @@ class DeepWorkAssistant:
         return titles.get(stage, 'Deep work reminder')
 
     @staticmethod
-    def _message_for_stage(stage: str) -> str:
+    def _message_for_stage(stage: str, profile: LaptopUseProfile | None = None) -> str:
         messages = {
             'hydration': 'You have been in flow for a while. Drink some water.',
             'stretch': 'Time to stand up, stretch, and reset your posture.',
             'eat': 'You have been pushing for a long stretch. Grab food if you can.',
         }
-        return messages.get(stage, 'Check in with your body and keep the flow intentional.')
+        message = messages.get(stage, 'Check in with your body and keep the flow intentional.')
+        if profile is None or profile.dominant_category == 'general':
+            return message
+
+        context = {
+            'coding': ' Your laptop pattern says this is usually coding flow, so reset your wrists, neck, and eyes before you dive back in.',
+            'writing-admin': ' Your laptop pattern says this is writing/admin work, so loosen your shoulders and unclench your jaw.',
+            'browser-research': ' Your laptop pattern says this is research/browser work, so look away from the screen and reset your posture.',
+            'communication': ' Your laptop pattern says this is communication-heavy work, so take one quiet minute before the next response.',
+            'creative': ' Your laptop pattern says this is creative work, so stand up and give your hands and eyes a reset.',
+        }.get(profile.dominant_category, '')
+        if stage == 'stretch' and context:
+            return f'{message}{context}'
+        if stage == 'hydration' and profile.break_response_style == 'pushes-through-reminders':
+            return f'{message} You often push through reminders, so take the sip now before continuing.'
+        return message
 
 
 def summary_from_record(record: dict[str, Any]) -> SessionSummary:

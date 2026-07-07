@@ -10,6 +10,7 @@ from .engine import (
     DeepWorkAssistant,
     EngineEvent,
     ReminderPlan,
+    analyze_laptop_use,
     build_adaptive_plan,
     format_plan,
     summary_from_record,
@@ -53,8 +54,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == 'plan':
         history = HistoryStore(args.history)
-        plan = build_adaptive_plan(history.load_recent())
+        recent = history.load_recent()
+        plan = build_adaptive_plan(recent)
+        profile = analyze_laptop_use(recent)
         print(format_plan(plan))
+        print(
+            '[deep-work-assistant] laptop profile: '
+            f'category={profile.dominant_category}, '
+            f'flow={profile.flow_style}, '
+            f'reminders={profile.break_response_style}, '
+            f'top_apps={", ".join(profile.top_apps) or "none"}, '
+            f'suggested={format_plan(profile.suggested_plan)}'
+        )
         return 0
 
     if command == 'simulate':
@@ -88,9 +99,12 @@ def run_live_loop(
 ) -> int:
     notifier = DesktopNotifier(dry_run=dry_run)
     probe = WindowsActivityProbe()
-    plan = build_adaptive_plan(history.load_recent())
+    recent = history.load_recent()
+    plan = build_adaptive_plan(recent)
+    laptop_profile = analyze_laptop_use(recent)
     assistant = DeepWorkAssistant(
         reminder_plan=plan,
+        laptop_use_profile=laptop_profile,
         start_streak_required=start_streak,
         stop_streak_required=stop_streak,
         start_idle_threshold_seconds=start_idle_threshold,
@@ -169,10 +183,18 @@ def _handle_events(
             summary = event.data['summary']
             session_summary = summary_from_record(summary)
             history.append(session_summary)
-            assistant.reminder_plan = build_adaptive_plan(history.load_recent())
+            recent = history.load_recent()
+            assistant.reminder_plan = build_adaptive_plan(recent)
+            assistant.laptop_use_profile = analyze_laptop_use(recent)
             _maybe_write_obsidian_log(obsidian_vault, session_summary, assistant.reminder_plan)
             print(f"[deep-work-assistant] session ended; duration={summary['duration_seconds']}s")
             print(f"[deep-work-assistant] adapted plan -> {format_plan(assistant.reminder_plan)}")
+            print(
+                '[deep-work-assistant] laptop profile -> '
+                f'{assistant.laptop_use_profile.dominant_category}, '
+                f'{assistant.laptop_use_profile.flow_style}, '
+                f'{assistant.laptop_use_profile.break_response_style}'
+            )
 
 
 def _maybe_write_obsidian_log(
