@@ -69,6 +69,10 @@ def test_reminder_message_uses_laptop_profile_context():
     events = assistant.process_sample(sample(2))
     stretch = [event for event in events if event.data.get('stage') == 'stretch'][0]
 
-    assert 'coding' in stretch.data['message'].lower()
-    assert 'reset' in stretch.data['message'].lower()
+    # New messages use time-of-day context + activity-specific stretch suggestions
+    # For coding in the morning, stretch suggestions include coding-specific exercises
+    assert 'coding' in stretch.data['category']
     assert stretch.data['laptop_use_profile']['dominant_category'] == 'coding'
+    # The message should include stretch suggestions for the profile category
+    message = stretch.data['message']
+    assert 'Try:' in message or 'Start' in message

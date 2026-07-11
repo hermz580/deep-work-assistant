@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from statistics import median
 from typing import Any, Iterable, Sequence
 from uuid import uuid4
 
+from .messages import build_reminder_message, build_session_start_message, time_of_day_label
+
 
 DEFAULT_REMINDER_PLAN = (60, 120, 180)
 DEFAULT_RESPONSE_WINDOW_MINUTES = 10
+STREAK_FILE = 'deep_work_streak.json'
 
 
 def clamp(value: float, low: int, high: int) -> int:
@@ -90,6 +95,82 @@ class LaptopUseProfile:
                 'eat_minutes': self.suggested_plan.eat_minutes,
             },
         }
+
+
+@dataclass
+class FocusStreak:
+    """Tracks consecutive days with at least one completed focus session."""
+
+    current_streak: int = 0
+    longest_streak: int = 0
+    last_session_date: str = ''  # ISO date string (YYYY-MM-DD)
+    daily_session_count: int = 0
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            'current_streak': self.current_streak,
+            'longest_streak': self.longest_streak,
+            'last_session_date': self.last_session_date,
+            'daily_session_count': self.daily_session_count,
+        }
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> 'FocusStreak':
+        return cls(
+            current_streak=int(record.get('current_streak', 0)),
+            longest_streak=int(record.get('longest_streak', 0)),
+            last_session_date=str(record.get('last_session_date', '')),
+            daily_session_count=int(record.get('daily_session_count', 0)),
+        )
+
+
+def load_streak(path: Path | None = None) -> FocusStreak:
+    """Load streak data from JSON file."""
+    path = path or Path.home() / '.deep_work_assistant' / STREAK_FILE
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return FocusStreak.from_record(data)
+        except (json.JSONDecodeError, KeyError, ValueError):
+            pass
+    return FocusStreak()
+
+
+def save_streak(streak: FocusStreak, path: Path | None = None) -> None:
+    """Save streak data to JSON file."""
+    path = path or Path.home() / '.deep_work_assistant' / STREAK_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(streak.to_record(), indent=2), encoding='utf-8')
+
+
+def advance_streak(streak: FocusStreak, session_date: date | None = None) -> FocusStreak:
+    """Advance the focus streak by one session."""
+    session = session_date or datetime.now(timezone.utc).astimezone().date()
+    today = session.isoformat()
+
+    if streak.last_session_date == today:
+        # Same day — just increment the daily count
+        return FocusStreak(
+            current_streak=streak.current_streak,
+            longest_streak=streak.longest_streak,
+            last_session_date=today,
+            daily_session_count=streak.daily_session_count + 1,
+        )
+
+    yesterday = (session - timedelta(days=1)).isoformat()
+    if streak.last_session_date == yesterday or not streak.last_session_date:
+        # Consecutive day (or first session ever)
+        new_streak = streak.current_streak + 1
+    else:
+        # Streak broken
+        new_streak = 1
+
+    return FocusStreak(
+        current_streak=new_streak,
+        longest_streak=max(new_streak, streak.longest_streak),
+        last_session_date=today,
+        daily_session_count=1,
+    )
 
 
 @dataclass(frozen=True)
@@ -299,10 +380,14 @@ class DeepWorkAssistant:
         stop_idle_threshold_seconds: int = 900,
         response_window_minutes: int = DEFAULT_RESPONSE_WINDOW_MINUTES,
         laptop_use_profile: LaptopUseProfile | None = None,
+        focus_streak: FocusStreak | None = None,
         session_id_factory: Any | None = None,
+        voice_enabled: bool = False,
     ) -> None:
         self.reminder_plan = reminder_plan or (laptop_use_profile.suggested_plan if laptop_use_profile else ReminderPlan(*DEFAULT_REMINDER_PLAN))
         self.laptop_use_profile = laptop_use_profile or LaptopUseProfile(suggested_plan=self.reminder_plan)
+        self.focus_streak = focus_streak or FocusStreak()
+        self.voice_enabled = voice_enabled
         self.start_streak_required = max(1, int(start_streak_required))
         self.stop_streak_required = max(1, int(stop_streak_required))
         self.start_idle_threshold_seconds = int(start_idle_threshold_seconds)
@@ -320,6 +405,12 @@ class DeepWorkAssistant:
             self._advance_start_streak(sample)
             if self._start_streak >= self.start_streak_required:
                 self.current_session = self._start_session(sample)
+                # Build motivational session-start message
+                start_message = build_session_start_message(
+                    primary_app=sample.process_name,
+                    profile_category=self.laptop_use_profile.dominant_category,
+                    streak_days=self.focus_streak.current_streak,
+                )
                 events.append(
                     EngineEvent(
                         'session_started',
@@ -327,6 +418,10 @@ class DeepWorkAssistant:
                             'session_id': self.current_session.session_id,
                             'started_at': _utc_iso(self.current_session.started_at),
                             'primary_app': self.current_session.primary_app,
+                            'message': start_message,
+                            'streak_days': self.focus_streak.current_streak,
+                            'category': self.laptop_use_profile.dominant_category,
+                            'voice_enabled': self.voice_enabled,
                         },
                     )
                 )
@@ -344,24 +439,33 @@ class DeepWorkAssistant:
             for reminder in session.reminders:
                 if reminder.sent_at is None and sample.captured_at >= reminder.due_at:
                     reminder.sent_at = sample.captured_at
+                    # Build smarter, context-aware message
+                    smart_message = build_reminder_message(
+                        stage=reminder.stage,
+                        profile_category=self.laptop_use_profile.dominant_category,
+                        now=sample.captured_at,
+                        streak_days=self.focus_streak.current_streak,
+                    )
                     events.append(
                         EngineEvent(
                             'reminder_due',
                             {
                                 'stage': reminder.stage,
                                 'title': self._title_for_stage(reminder.stage),
-                                'message': self._message_for_stage(reminder.stage, self.laptop_use_profile),
+                                'message': smart_message,
                                 'sent_at': _utc_iso(sample.captured_at),
                                 'due_at': _utc_iso(reminder.due_at),
                                 'session_id': session.session_id,
                                 'laptop_use_profile': self.laptop_use_profile.to_record(),
+                                'streak_days': self.focus_streak.current_streak,
+                                'category': self.laptop_use_profile.dominant_category,
                             },
                         )
                     )
 
             if session.inactive_streak >= self.stop_streak_required:
                 summary = self._finalize_current_session(sample.captured_at, ended_reason='break')
-                events.append(EngineEvent('session_ended', {'summary': summary.to_record()}))
+                events.append(EngineEvent('session_ended', {'summary': summary.to_record(), 'focus_streak': self.focus_streak.to_record()}))
 
         self._previous_sample = sample
         return events
@@ -371,6 +475,9 @@ class DeepWorkAssistant:
             return None
         finished_at = finished_at or self.current_session.last_sample_at
         summary = self._finalize_current_session(finished_at, ended_reason=ended_reason)
+        # Advance streak on any session that lasted at least 10 minutes
+        if summary.duration_seconds >= 600:
+            self.focus_streak = advance_streak(self.focus_streak, finished_at.astimezone().date())
         return summary
 
     def _advance_start_streak(self, sample: ActivitySample) -> None:

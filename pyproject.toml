@@ -9,6 +9,10 @@ description = "Adaptive deep work reminders for Windows"
 requires-python = ">=3.11"
 dependencies = ["psutil>=5.9"]
 
+[project.optional-dependencies]
+voice = ["edge-tts>=6.0"]
+dev = ["pytest>=7.0"]
+
 [project.scripts]
 deep-work-assistant = "deep_work_assistant.cli:main"
 
