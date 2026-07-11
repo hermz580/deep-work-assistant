@@ -20,6 +20,7 @@ from .engine import (
     summary_from_record,
 )
 from .history import HistoryStore
+from .kanban import COLUMNS, KanbanBoard, Card, format_board, format_card_list
 from .obsidian_log import append_session_log
 from .notifier import DesktopNotifier
 from .runtime import WindowsActivityProbe
@@ -50,6 +51,46 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument('--history', type=Path, default=HistoryStore.default().path)
 
     sub.add_parser('simulate', help='Run a dry-run scenario to verify the engine')
+
+    # ── Kanban board ──
+    board_p = sub.add_parser('board', help='Show the Kanban board')
+
+    # ── Card commands ──
+    card_p = sub.add_parser('card', help='Manage Kanban cards')
+    card_sub = card_p.add_subparsers(dest='card_command')
+
+    card_add = card_sub.add_parser('add', help='Add a new card')
+    card_add.add_argument('title', help='Card title')
+    card_add.add_argument('--desc', '-d', default='', help='Card description')
+    card_add.add_argument('--priority', '-p', type=int, default=0, choices=[0, 1, 2],
+                          help='Priority: 0=normal, 1=high, 2=urgent')
+    card_add.add_argument('--column', '-c', default='backlog',
+                          choices=COLUMNS, help='Starting column')
+    card_add.add_argument('--tags', '-t', nargs='*', default=[], help='Tags')
+    card_add.add_argument('--app', help='Linked app pattern (e.g. code.exe)')
+    card_add.add_argument('--window', help='Linked window title pattern')
+
+    card_move = card_sub.add_parser('move', help='Move a card to another column')
+    card_move.add_argument('card_id', help='Card ID to move')
+    card_move.add_argument('to_column', choices=COLUMNS, help='Destination column')
+
+    card_list = card_sub.add_parser('list', help='List cards')
+    card_list.add_argument('--column', '-c', choices=COLUMNS, help='Filter by column')
+    card_list.add_argument('--tag', '-t', help='Filter by tag')
+
+    card_delete = card_sub.add_parser('delete', help='Delete a card')
+    card_delete.add_argument('card_id', help='Card ID to delete')
+
+    card_show = card_sub.add_parser('show', help='View card details')
+    card_show.add_argument('card_id', help='Card ID to view')
+
+    card_log = card_sub.add_parser('log', help='Log deep work time to a card')
+    card_log.add_argument('card_id', help='Card ID')
+    card_log.add_argument('--minutes', '-m', type=int, default=0,
+                          help='Minutes to log (default: auto from last session)')
+
+    card_search = card_sub.add_parser('search', help='Search cards')
+    card_search.add_argument('query', help='Search query')
 
     return parser
 
@@ -84,6 +125,16 @@ def main(argv: list[str] | None = None) -> int:
     if command == 'simulate':
         return simulate_scenario()
 
+    # ── Kanban board ──
+    if command == 'board':
+        board = KanbanBoard()
+        print(format_board(board))
+        return 0
+
+    # ── Kanban cards ──
+    if command == 'card':
+        return _handle_card_command(args)
+
     history = HistoryStore(args.history)
     return run_live_loop(
         history=history,
@@ -98,6 +149,103 @@ def main(argv: list[str] | None = None) -> int:
         voice_enabled=args.voice,
         voice_pre_announce=args.voice_pre_announce,
     )
+
+
+def _handle_card_command(args: argparse.Namespace) -> int:
+    """Handle card subcommands."""
+    board = KanbanBoard()
+    cmd = args.card_command
+
+    if cmd == 'add':
+        card = Card(
+            card_id='',
+            title=args.title,
+            description=args.desc,
+            column=args.column,
+            priority=args.priority,
+            tags=list(args.tags) if args.tags else [],
+            linked_app_pattern=args.app or '',
+            linked_window_pattern=args.window or '',
+        )
+        created = board.add_card(card)
+        print(f'✅ Card added: {created.card_id}')
+        print(f'   "{created.title}" → {created.column_label}')
+        return 0
+
+    if cmd == 'move':
+        result = board.move_card(args.card_id, args.to_column)
+        if result is None:
+            card = board.get_card(args.card_id)
+            if card is None:
+                print(f'❌ Card not found: {args.card_id}')
+                return 1
+            print(f'❌ Cannot move from "{card.column_label}" to "{args.to_column.replace("_", " ").title()}"')
+            return 1
+        print(f'✅ Moved: "{result.title}" → {result.column_label}')
+        return 0
+
+    if cmd == 'list':
+        cards = board.list_cards(column=args.column, tag=args.tag)
+        if not cards:
+            print('  (no cards found)')
+        else:
+            print(format_card_list(cards))
+        return 0
+
+    if cmd == 'delete':
+        if board.delete_card(args.card_id):
+            print(f'✅ Deleted card: {args.card_id}')
+        else:
+            print(f'❌ Card not found: {args.card_id}')
+            return 1
+        return 0
+
+    if cmd == 'show':
+        card = board.get_card(args.card_id)
+        if card is None:
+            print(f'❌ Card not found: {args.card_id}')
+            return 1
+        mins = card.session_time_seconds // 60
+        print(f'📋 Card: {card.title}')
+        print(f'   ID:       {card.card_id}')
+        print(f'   Column:   {card.column_label}')
+        print(f'   Priority: {card.priority_label}')
+        print(f'   Tags:     {", ".join(card.tags) or "(none)"}')
+        print(f'   Time:     {mins}m logged')
+        if card.description:
+            print(f'   Desc:     {card.description}')
+        if card.linked_app_pattern:
+            print(f'   App:      {card.linked_app_pattern}')
+        if card.linked_window_pattern:
+            print(f'   Window:   {card.linked_window_pattern}')
+        return 0
+
+    if cmd == 'log':
+        card = board.get_card(args.card_id)
+        if card is None:
+            print(f'❌ Card not found: {args.card_id}')
+            return 1
+        minutes = args.minutes
+        if minutes <= 0:
+            print('❌ Use --minutes to specify time to log')
+            return 1
+        seconds = minutes * 60
+        updated = board.log_card_session_time(args.card_id, seconds)
+        if updated:
+            print(f'✅ Logged {minutes}m to "{updated.title}"')
+        return 0
+
+    if cmd == 'search':
+        cards = board.search_cards(args.query)
+        if not cards:
+            print(f'  (no cards matching "{args.query}")')
+        else:
+            print(f'Search results for "{args.query}":')
+            print(format_card_list(cards))
+        return 0
+
+    print('❌ Unknown card command. Use: add, move, list, delete, search')
+    return 1
 
 
 def run_live_loop(
@@ -122,6 +270,13 @@ def run_live_loop(
     plan = build_adaptive_plan(recent)
     laptop_profile = analyze_laptop_use(recent)
     focus_streak = load_streak()
+    board = KanbanBoard()
+    active_card_id: str | None = None
+
+    # Track the last active app for card suggestions
+    last_app_name = ''
+    last_window_title = ''
+
     assistant = DeepWorkAssistant(
         reminder_plan=plan,
         laptop_use_profile=laptop_profile,
@@ -137,12 +292,19 @@ def run_live_loop(
     print(f'[deep-work-assistant] starting with {format_plan(plan)}')
     print(f'[deep-work-assistant] history file: {history.path}')
     print(f'[deep-work-assistant] focus streak: {focus_streak.current_streak} days (voice={"on" if voice_enabled else "off"})')
+    print(f'[deep-work-assistant] kanban board: {board.db_path} ({board.total_cards()} cards)')
 
     try:
         while True:
             sample = probe.sample()
             events = assistant.process_sample(sample)
-            _handle_events(events, notifier, history, assistant, obsidian_vault)
+
+            # Track app context for card suggestions
+            if sample.process_name:
+                last_app_name = sample.process_name
+                last_window_title = sample.window_title or ''
+
+            _handle_events(events, notifier, history, assistant, obsidian_vault, board, active_card_id)
             time.sleep(max(1.0, float(poll_interval)))
     except KeyboardInterrupt:
         summary = assistant.finalize_session(datetime.now(timezone.utc), ended_reason='manual')
@@ -184,7 +346,7 @@ def simulate_scenario() -> int:
     print('[deep-work-assistant] simulate scenario start')
     for sample in samples:
         events = assistant.process_sample(sample)
-        _handle_events(events, notifier, history, assistant, None)
+        _handle_events(events, notifier, history, assistant, None, None, None)
     summary = assistant.finalize_session(base + timedelta(minutes=191), ended_reason='manual')
     if summary:
         history.append(summary)
@@ -199,6 +361,8 @@ def _handle_events(
     history: HistoryStore,
     assistant: DeepWorkAssistant,
     obsidian_vault: Path | None,
+    board: KanbanBoard | None = None,
+    active_card_id: str | None = None,
 ) -> None:
     for event in events:
         if event.kind == 'session_started':
@@ -207,6 +371,14 @@ def _handle_events(
             # Speak the motivational session-start message
             if event.data.get('voice_enabled'):
                 notifier.speak_session_start(message)
+            # Show card suggestions for this app
+            if board and event.data.get('primary_app'):
+                app_name = event.data['primary_app']
+                suggestions = board.suggest_cards_for_app(app_name)
+                if suggestions:
+                    print(f"[deep-work-assistant] cards matching '{app_name}':")
+                    for s in suggestions[:3]:
+                        print(f"   • {s.title} ({s.card_id})")
         elif event.kind == 'reminder_due':
             notifier.notify(event.data['title'], event.data['message'])
             print(f"[deep-work-assistant] reminder sent: {event.data['stage']} at {event.data['sent_at']}")
@@ -221,10 +393,15 @@ def _handle_events(
             if session_summary.duration_seconds >= 600:
                 assistant.focus_streak = advance_streak(assistant.focus_streak)
                 save_streak(assistant.focus_streak)
+            # Log session time to Kanban board if active card
+            if board and active_card_id and session_summary.duration_seconds >= 60:
+                board.log_card_session_time(active_card_id, session_summary.duration_seconds)
             _maybe_write_obsidian_log(obsidian_vault, session_summary, assistant.reminder_plan)
             print(f"[deep-work-assistant] session ended; duration={summary['duration_seconds']}s")
             print(f"[deep-work-assistant] adapted plan -> {format_plan(assistant.reminder_plan)}")
             print(f"[deep-work-assistant] focus streak: {assistant.focus_streak.current_streak} days (longest: {assistant.focus_streak.longest_streak})")
+            if board and active_card_id:
+                print(f"[deep-work-assistant] time logged to card: {active_card_id}")
             print(
                 '[deep-work-assistant] laptop profile -> '
                 f'{assistant.laptop_use_profile.dominant_category}, '
