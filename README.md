@@ -24,7 +24,68 @@ A local Windows assistant that detects focused work from active-window stability
 | **Stretch suggestions** | 15 specific exercises across 6 activity categories |
 | **Focus streaks** | Tracks consecutive days, celebrates milestones |
 | **Voice TTS** | Natural-sounding voice reminders (`pip install deep-work-assistant[voice]`) |
-| **24 new tests** | 33 tests total, all passing |
+| **Kanban board** | Local SQLite-backed project management — plan → do → review |
+| **31 new tests** | 64 tests total, all passing |
+
+## New in v0.3.0 — Kanban Board
+
+The Deep Work Assistant now includes a **local Kanban board** that lives alongside your focus tracker. Plan tasks, track deep work time against them, and watch the board auto-suggest cards based on what you're working on.
+
+### Board commands
+
+```bash
+# Show the full board
+python -m deep_work_assistant board
+
+# Add a card
+python -m deep_work_assistant card add "Build API Gateway" \
+  --desc "REST endpoints for user auth" \
+  --priority 1 \
+  --tags backend api \
+  --app code.exe \
+  --window gateway
+
+# Move a card through columns: backlog → ready → in_progress → review → done
+python -m deep_work_assistant card move <card-id> in_progress
+python -m deep_work_assistant card move <card-id> review
+python -m deep_work_assistant card move <card-id> done
+
+# List cards (filter by column or tag)
+python -m deep_work_assistant card list
+python -m deep_work_assistant card list --column in_progress
+python -m deep_work_assistant card list --tag backend
+
+# View card details
+python -m deep_work_assistant card show <card-id>
+
+# Log deep work time to a card
+python -m deep_work_assistant card log <card-id> --minutes 120
+
+# Search cards
+python -m deep_work_assistant card search "gateway"
+
+# Delete a card
+python -m deep_work_assistant card delete <card-id>
+```
+
+### Card columns
+
+| Column | Description |
+|--------|-------------|
+| **Backlog** | Ideas and tasks not yet started |
+| **Ready** | Prioritized and ready to work on |
+| **In Progress** | Currently being worked on |
+| **Review** | Done but needs verification |
+| **Done** | Completed |
+
+### Deep work integration
+
+When you start a focus session, the assistant checks your active app and
+suggests matching cards from the board. When a session ends, time is
+logged against the active card if one is set.
+
+The board is stored in `~/.deep_work_assistant/kanban.db` (SQLite) — your
+data stays local and private.
 
 ## What it does
 
