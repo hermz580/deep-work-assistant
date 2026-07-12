@@ -10,7 +10,6 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -382,6 +381,6 @@ def format_board(board: KanbanBoard) -> str:
     if total:
         hours = total // 3600
         minutes = (total % 3600) // 60
-        lines.append(f'\n─' * 48)
+        lines.append('\n─' * 48)
         lines.append(f'⏱ Total deep work logged: {hours}h {minutes}m')
     return '\n'.join(lines)

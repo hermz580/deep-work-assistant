@@ -4,12 +4,12 @@ import argparse
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from .engine import (
     ActivitySample,
     DeepWorkAssistant,
     EngineEvent,
-    FocusStreak,
     ReminderPlan,
     advance_streak,
     analyze_laptop_use,
@@ -25,10 +25,16 @@ from .obsidian_log import append_session_log
 from .notifier import DesktopNotifier
 from .runtime import WindowsActivityProbe
 from .voice import ChainedNotifier, VoiceNotifier
-from .pomodoro import PomodoroTimer, PomodoroConfig, PomodoroState, load_history as load_pomo_history
+from .pomodoro import PomodoroTimer, PomodoroConfig, PomodoroState, PomodoroSession, load_history as load_pomo_history, _utc_iso
 from .mindfulness import MindfulnessCoach, MindfulnessType
 from .analytics import AnalyticsEngine, format_weekly_report, format_productivity_score, format_insights, format_trend
 from .git_integration import GitRepoWatcher, format_git_status
+
+
+def _positive_int(name: str, value: int) -> int:
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f'{name} must be a positive integer')
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser('simulate', help='Run a dry-run scenario to verify the engine')
 
     # ── Kanban board ──
-    board_p = sub.add_parser('board', help='Show the Kanban board')
+    sub.add_parser('board', help='Show the Kanban board')
 
     # ── Card commands ──
     card_p = sub.add_parser('card', help='Manage Kanban cards')
@@ -101,10 +107,10 @@ def build_parser() -> argparse.ArgumentParser:
     pomo_sub = pomo_p.add_subparsers(dest='pomo_command')
 
     pomo_start = pomo_sub.add_parser('start', help='Start a pomodoro session')
-    pomo_start.add_argument('--work', type=int, default=25, help='Work minutes')
-    pomo_start.add_argument('--short-break', type=int, default=5, help='Short break minutes')
-    pomo_start.add_argument('--long-break', type=int, default=15, help='Long break minutes')
-    pomo_start.add_argument('--pomodoros', type=int, default=4, help='Pomodoros before long break')
+    pomo_start.add_argument('--work', type=lambda v: _positive_int('work', int(v)), default=25, help='Work minutes')
+    pomo_start.add_argument('--short-break', type=lambda v: _positive_int('short_break', int(v)), default=5, help='Short break minutes')
+    pomo_start.add_argument('--long-break', type=lambda v: _positive_int('long_break', int(v)), default=15, help='Long break minutes')
+    pomo_start.add_argument('--pomodoros', type=lambda v: _positive_int('pomodoros', int(v)), default=4, help='Pomodoros before long break')
     pomo_start.add_argument('--card', help='Link to a Kanban card ID')
 
     pomo_sub.add_parser('status', help='Show current pomodoro status')
@@ -118,17 +124,17 @@ def build_parser() -> argparse.ArgumentParser:
     mindful_sub = mindful_p.add_subparsers(dest='mindful_command')
 
     breath_p = mindful_sub.add_parser('breathe', help='Breathing exercise')
-    breath_p.add_argument('--type', choices=['box', '4-7-8', 'simple'], default='box',
+    breath_p.add_argument('--type', choices=['box', '4 7 8', 'simple'], default='box',
                           help='Breathing pattern')
-    breath_p.add_argument('--minutes', type=int, default=3, help='Duration in minutes')
+    breath_p.add_argument('--minutes', type=lambda v: _positive_int('minutes', int(v)), default=3, help='Duration in minutes')
 
     countdown_p = mindful_sub.add_parser('countdown', help='Silent countdown timer')
-    countdown_p.add_argument('--minutes', type=int, default=5, help='Duration in minutes')
+    countdown_p.add_argument('--minutes', type=lambda v: _positive_int('minutes', int(v)), default=5, help='Duration in minutes')
 
     mindful_sub.add_parser('body-scan', help='Guided body scan relaxation')
 
     gratitude_p = mindful_sub.add_parser('gratitude', help='Gratitude reflection')
-    gratitude_p.add_argument('--minutes', type=int, default=3, help='Duration in minutes')
+    gratitude_p.add_argument('--minutes', type=lambda v: _positive_int('minutes', int(v)), default=3, help='Duration in minutes')
 
     # ── Analytics ──
     analytics_p = sub.add_parser('analytics', aliases=['stats'],
@@ -163,7 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    command = args.command or 'run'
+    command = args.command
+
+    if command is None:
+        parser.print_usage()
+        print('error: no command provided')
+        return 1
 
     if command == 'plan':
         history = HistoryStore(args.history)
@@ -453,34 +464,49 @@ def _minutes_to_hours_short(m: int) -> str:
 
 # ── Pomodoro command handler ────────────────────────────────────────────────
 
-ACTIVE_POMO_PATH = Path.home() / '.deep_work_assistant' / 'active_pomodoro.json'
+_ACTIVE_POMO_PATH = Path.home() / '.deep_work_assistant' / 'active_pomodoro.json'
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 def _save_active_pomo(timer: PomodoroTimer) -> None:
     """Persist the active pomodoro timer state so subcommands can find it."""
-    ACTIVE_POMO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _ACTIVE_POMO_PATH.parent.mkdir(parents=True, exist_ok=True)
     state = timer.save_state()
-    ACTIVE_POMO_PATH.write_text(
+    _ACTIVE_POMO_PATH.write_text(
         __import__('json').dumps(state, indent=2), encoding='utf-8'
     )
 
 
 def _load_active_pomo() -> PomodoroTimer | None:
     """Restore the active pomodoro timer from saved state, or None."""
-    if not ACTIVE_POMO_PATH.exists():
+    if not _ACTIVE_POMO_PATH.exists():
         return None
     try:
         import json
-        data = json.loads(ACTIVE_POMO_PATH.read_text(encoding='utf-8'))
-        if data.get('session') is None:
-            return None
+        data = json.loads(_ACTIVE_POMO_PATH.read_text(encoding='utf-8'))
+    except Exception as exc:
+        print(f'[deep-work-assistant] active pomodoro load failed: {exc}')
+        return None
+    try:
         return PomodoroTimer.restore_state(data)
-    except Exception:
+    except Exception as exc:
+        print(f'[deep-work-assistant] active pomodoro parse failed: {exc}')
         return None
 
 
 def _clear_active_pomo() -> None:
-    ACTIVE_POMO_PATH.unlink(missing_ok=True)
+    _ACTIVE_POMO_PATH.unlink(missing_ok=True)
 
 
 def _handle_pomo_command(args: argparse.Namespace) -> int:
@@ -695,10 +721,6 @@ def run_live_loop(
     board = KanbanBoard()
     active_card_id: str | None = None
 
-    # Track the last active app for card suggestions
-    last_app_name = ''
-    last_window_title = ''
-
     assistant = DeepWorkAssistant(
         reminder_plan=plan,
         laptop_use_profile=laptop_profile,
@@ -720,11 +742,6 @@ def run_live_loop(
         while True:
             sample = probe.sample()
             events = assistant.process_sample(sample)
-
-            # Track app context for card suggestions
-            if sample.process_name:
-                last_app_name = sample.process_name
-                last_window_title = sample.window_title or ''
 
             _handle_events(events, notifier, history, assistant, obsidian_vault, board, active_card_id)
             time.sleep(max(1.0, float(poll_interval)))

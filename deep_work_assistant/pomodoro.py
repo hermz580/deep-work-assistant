@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,16 @@ class PomodoroConfig:
     pomodoros_before_long: int = 4
     auto_start_breaks: bool = True
     auto_start_work: bool = False
+
+    def __post_init__(self) -> None:
+        if self.work_minutes <= 0:
+            raise ValueError('work_minutes must be positive')
+        if self.short_break_minutes <= 0:
+            raise ValueError('short_break_minutes must be positive')
+        if self.long_break_minutes <= 0:
+            raise ValueError('long_break_minutes must be positive')
+        if self.pomodoros_before_long <= 0:
+            raise ValueError('pomodoros_before_long must be positive')
 
 
 @dataclass

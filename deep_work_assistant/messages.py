@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Sequence
 
 
 # ── Time-of-day helpers ──────────────────────────────────────────────────────
 
 def time_of_day_label(now: datetime | None = None) -> str:
-    """Return 'morning', 'afternoon', 'evening', or 'night'."""
-    now = now or datetime.now(timezone.utc).astimezone()
+    """Return 'morning', 'afternoon', 'evening', or 'night' for UTC."""
+    now = now or datetime.now(timezone.utc)
     hour = now.hour
     if 5 <= hour < 12:
         return 'morning'

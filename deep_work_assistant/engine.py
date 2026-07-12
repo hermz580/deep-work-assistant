@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 from uuid import uuid4
 
-from .messages import build_reminder_message, build_session_start_message, time_of_day_label
+from .messages import build_reminder_message, build_session_start_message
 
 
 DEFAULT_REMINDER_PLAN = (60, 120, 180)

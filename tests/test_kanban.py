@@ -3,7 +3,6 @@
 import pytest
 
 from deep_work_assistant.kanban import (
-    COLUMNS,
     Card,
     KanbanBoard,
     format_board,

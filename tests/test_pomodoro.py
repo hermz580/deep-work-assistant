@@ -2,16 +2,12 @@
 
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from deep_work_assistant.pomodoro import (
     PomodoroTimer,
     PomodoroConfig,
     PomodoroState,
-    PomodoroSession,
-    PomodoroEvent,
     load_history,
-    POMODORO_LOG_PATH,
 )
 
 BASE = datetime(2026, 7, 12, 9, 0, tzinfo=timezone.utc)
@@ -233,10 +229,10 @@ class TestPomodoroEdgeCases:
 
     def test_double_start_resets_session(self):
         timer = PomodoroTimer(PomodoroConfig(work_minutes=25))
-        first = timer.start(now=BASE)
+        timer.start(now=BASE)
         first_id = timer.session.session_id
 
-        second = timer.start(now=BASE + timedelta(hours=1))
+        timer.start(now=BASE + timedelta(hours=1))
         assert timer.session.session_id != first_id
         assert timer.session.state == PomodoroState.WORKING
 

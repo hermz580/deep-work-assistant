@@ -12,7 +12,6 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from typing import Callable
 
 
 # Try to import edge-tts; if not available, voice is disabled.
@@ -29,44 +28,63 @@ ALT_VOICE = 'en-US-GuyNeural'             # male voice for variety
 RATE = '+0%'                               # speech rate (can be '-10%' etc.)
 
 
-def _play_mp3_quiet(mp3_path: str) -> bool:
-    """Play an MP3 file silently on any platform. Returns True on success."""
+def _speak(path: str, text: str) -> bool:
+    """Play an audio file cross-platform. Returns True on playback attempt."""
     try:
         if sys.platform == 'win32':
-            # Windows: use winsound or start-process
             try:
                 import winsound
-                winsound.PlaySound(mp3_path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
                 return True
             except Exception:
-                # Fallback: use Windows Media Player or start
+                ps_script = (
+                    "$p = New-Object System.Media.MediaPlayer; "
+                    "$p.Open('" + str(path).replace("'", "''") + "'); "
+                    "$p.Play(); "
+                    "while($p.Position -lt $p.NaturalDuration) { Start-Sleep -Milliseconds 200 }; "
+                    "$p.Close()"
+                )
                 subprocess.Popen(
-                    ['powershell', '-c', f'(New-Object Media.SoundPlayer "{mp3_path}").PlaySync()'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    ['powershell.exe', '-NoProfile', '-Command', ps_script],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 return True
-        elif sys.platform == 'darwin':
-            subprocess.Popen(['afplay', mp3_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        if sys.platform == 'darwin':
+            subprocess.Popen(['afplay', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
-        else:
-            # Linux: try aplay, paplay, or ffplay
-            for player in ('paplay', 'aplay', 'ffplay', 'mpg123', 'mpv'):
-                try:
-                    subprocess.Popen(
-                        [player, mp3_path],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    )
-                    return True
-                except FileNotFoundError:
-                    continue
-            return False
+
+        for player in ('paplay', 'aplay', 'ffplay', 'mpg123', 'mpv'):
+            try:
+                subprocess.Popen([player, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except FileNotFoundError:
+                continue
+        return False
     except Exception:
         return False
 
 
+async def _speak_async(text: str, voice: str, rate: str) -> bool:
+    """Generate TTS audio and return True when playback is attempted."""
+    tmp_path: str | None = None
+    try:
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp:
+            tmp_path = tmp.name
+        await communicate.save(tmp_path)
+        return _speak(tmp_path, text)
+    except Exception:
+        return False
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
 def _run_async(coro) -> None:
     """Run an async coroutine in a new event loop on a background thread."""
-    def _run():
+    def _run() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -110,13 +128,7 @@ class VoiceNotifier:
 
         async def _speak() -> bool:
             try:
-                communicate = edge_tts.Communicate(text, use_voice, rate=self.rate)
-                with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp:
-                    tmp_path = tmp.name
-                await communicate.save(tmp_path)
-                ok = _play_mp3_quiet(tmp_path)
-                Path(tmp_path).unlink(missing_ok=True)
-                return ok
+                return await _speak_async(text, use_voice, self.rate)
             except Exception:
                 return False
 

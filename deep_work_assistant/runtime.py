@@ -3,7 +3,6 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wintypes
 from datetime import datetime, timezone
-from typing import Any
 
 import psutil
 
