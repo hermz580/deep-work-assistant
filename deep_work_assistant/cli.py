@@ -28,6 +28,7 @@ from .voice import ChainedNotifier, VoiceNotifier
 from .pomodoro import PomodoroTimer, PomodoroConfig, PomodoroState, load_history as load_pomo_history
 from .mindfulness import MindfulnessCoach, MindfulnessType
 from .analytics import AnalyticsEngine, format_weekly_report, format_productivity_score, format_insights, format_trend
+from .git_integration import GitRepoWatcher, format_git_status
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,6 +148,15 @@ def build_parser() -> argparse.ArgumentParser:
     cats_p.add_argument('--days', type=int, default=30, help='Trailing days')
     analytics_sub.add_parser('insights', help='Generate intelligence insights')
 
+    # ── Git integration ──
+    git_p = sub.add_parser('git', help='Git repository status and auto-commit')
+    git_sub = git_p.add_subparsers(dest='git_command')
+
+    git_sub.add_parser('status', help='Check git repo status')
+    commit_p = git_sub.add_parser('commit', help='Stage and commit changes')
+    commit_p.add_argument('-m', '--message', type=str, default=None,
+                          help='Commit message (auto-generated if omitted)')
+
     return parser
 
 
@@ -175,6 +185,12 @@ def main(argv: list[str] | None = None) -> int:
             f'{focus_streak.current_streak} days (longest: {focus_streak.longest_streak}, '
             f'today: {focus_streak.daily_session_count} sessions)'
         )
+        # Show git status as part of the plan
+        git_watcher = GitRepoWatcher()
+        if git_watcher.has_repo:
+            git_status = git_watcher.check_status()
+            print()
+            print(format_git_status(git_status))
         return 0
 
     if command == 'simulate':
@@ -201,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
     # ── Analytics ──
     if command == 'analytics':
         return _handle_analytics_command(args)
+
+    # ── Git integration ──
+    if command == 'git':
+        return _handle_git_command(args)
 
     history = HistoryStore(args.history)
     return run_live_loop(
@@ -375,6 +395,51 @@ def _handle_analytics_command(args: argparse.Namespace) -> int:
         return 0
 
     print('❌ Unknown analytics command. Use: week, score, trends, hours, categories, insights')
+    return 1
+
+
+# ── Git command handler ────────────────────────────────────────────────────
+
+def _handle_git_command(args: argparse.Namespace) -> int:
+    """Handle git subcommands."""
+    cmd = args.git_command
+    watcher = GitRepoWatcher()
+
+    if cmd == 'status':
+        if not watcher.has_repo:
+            print('  (no git repository found in current directory)')
+            return 0
+        status = watcher.check_status()
+        print(format_git_status(status))
+        return 0
+
+    if cmd == 'commit':
+        if not watcher.has_repo:
+            print('❌ No git repository found in current directory.')
+            return 1
+        status = watcher.check_status()
+        if status.is_clean:
+            print('  ✅ Nothing to commit — working tree is clean.')
+            return 0
+        message = args.message
+        if message:
+            print(f'  📝 Committing with message: "{message}"')
+        else:
+            message = watcher.suggest_commit_message()
+            print(f'  💡 Auto-generated message: "{message}"')
+        success = watcher.auto_commit(message=message)
+        if success:
+            print(f'  ✅ Committed successfully!')
+            new_status = watcher.last_status()
+            if new_status:
+                print(f'     Branch: {new_status.branch}')
+                print(f'     Message: {new_status.last_commit_message}')
+        else:
+            print('❌ Commit failed. Check git configuration.')
+            return 1
+        return 0
+
+    print('❌ Unknown git command. Use: status, commit')
     return 1
 
 
