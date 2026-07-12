@@ -70,8 +70,8 @@ class TestBreathingExercises:
         # After 2s within the 4s inhale phase, countdown shrinks
         coach.tick(now=BASE + timedelta(seconds=2))
         guidance = coach.get_guidance()
-        # phase_elapsed=2, phase_duration=4, remaining=int(4-2+1)=3 → "Inhale... 3... 2... 1"
-        assert guidance == "Inhale... 3... 2... 1"
+        # phase_elapsed=2, phase_duration=4, remaining=2 → "Inhale... 2... 1"
+        assert guidance == "Inhale... 2... 1"
 
     def test_breathing_cycles_through_all_phases(self):
         coach = MindfulnessCoach()

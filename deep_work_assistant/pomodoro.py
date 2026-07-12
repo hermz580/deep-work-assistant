@@ -89,6 +89,7 @@ class PomodoroTimer:
         self._paused_remaining_seconds: float | None = None
         self._events: list[PomodoroEvent] = []
         self._phase_completed_emitted: bool = False
+        # Internal event queue — accessible via drain_events() to avoid unbounded growth
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -331,6 +332,73 @@ class PomodoroTimer:
         if self.session is not None:
             self.session.active_card_id = card_id
 
+    def save_state(self) -> dict[str, Any]:
+        """Serialize the full timer + session state for persistence across CLI invocations.
+
+        Returns a dict that can be passed to :meth:`restore_state`.
+        """
+        state: dict[str, Any] = {
+            'config': {
+                'work_minutes': self.config.work_minutes,
+                'short_break_minutes': self.config.short_break_minutes,
+                'long_break_minutes': self.config.long_break_minutes,
+                'pomodoros_before_long': self.config.pomodoros_before_long,
+                'auto_start_breaks': self.config.auto_start_breaks,
+                'auto_start_work': self.config.auto_start_work,
+            },
+        }
+        if self.session is not None:
+            state['session'] = {
+                'session_id': self.session.session_id,
+                'state': self.session.state.value,
+                'current_pomodoro': self.session.current_pomodoro,
+                'work_started_at': _utc_iso(self.session.work_started_at) if self.session.work_started_at else None,
+                'phase_started_at': _utc_iso(self.session.phase_started_at) if self.session.phase_started_at else None,
+                'phase_duration_minutes': self.session.phase_duration_minutes,
+                'active_card_id': self.session.active_card_id,
+                'completed_pomodoros': list(self.session.completed_pomodoros),
+            }
+        if self._paused_remaining_seconds is not None:
+            state['paused_remaining_seconds'] = self._paused_remaining_seconds
+        return state
+
+    @classmethod
+    def restore_state(cls, state: dict[str, Any]) -> PomodoroTimer:
+        """Restore a timer from a previously saved state dict.
+
+        Used by CLI commands that need cross-invocation access to the active
+        pomodoro session.
+        """
+        cfg = state.get('config', {})
+        config = PomodoroConfig(
+            work_minutes=cfg.get('work_minutes', 25),
+            short_break_minutes=cfg.get('short_break_minutes', 5),
+            long_break_minutes=cfg.get('long_break_minutes', 15),
+            pomodoros_before_long=cfg.get('pomodoros_before_long', 4),
+            auto_start_breaks=cfg.get('auto_start_breaks', True),
+            auto_start_work=cfg.get('auto_start_work', False),
+        )
+        timer = cls(config)
+        timer._phase_completed_emitted = False
+
+        sess_data = state.get('session')
+        if sess_data:
+            timer.session = PomodoroSession(
+                session_id=sess_data.get('session_id', ''),
+                state=PomodoroState(sess_data.get('state', 'idle')),
+                current_pomodoro=sess_data.get('current_pomodoro', 1),
+                work_started_at=_parse_dt(sess_data['work_started_at']) if sess_data.get('work_started_at') else None,
+                phase_started_at=_parse_dt(sess_data['phase_started_at']) if sess_data.get('phase_started_at') else None,
+                phase_duration_minutes=sess_data.get('phase_duration_minutes', 0),
+                active_card_id=sess_data.get('active_card_id'),
+                completed_pomodoros=list(sess_data.get('completed_pomodoros', [])),
+            )
+
+        if 'paused_remaining_seconds' in state:
+            timer._paused_remaining_seconds = state['paused_remaining_seconds']
+
+        return timer
+
     # ── Internal helpers ─────────────────────────────────────────────────────
 
     def _phase_elapsed(self, now: datetime) -> bool:
@@ -496,3 +564,11 @@ def _utc_iso(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _parse_dt(value: str) -> datetime:
+    """Parse a UTC ISO-8601 string back to a datetime."""
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

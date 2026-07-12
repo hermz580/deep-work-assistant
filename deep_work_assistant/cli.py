@@ -134,12 +134,17 @@ def build_parser() -> argparse.ArgumentParser:
                                  help='Health insights and analytics')
     analytics_sub = analytics_p.add_subparsers(dest='analytics_command')
 
-    analytics_sub.add_parser('week', help='Weekly focus report')
+    week_p = analytics_sub.add_parser('week', help='Weekly focus report')
+    week_p.add_argument('--week', type=int, help='ISO week number (default: current)')
+    week_p.add_argument('--year', type=int, help='Year (default: current)')
+    week_p.add_argument('--json', action='store_true', help='Output as JSON')
     analytics_sub.add_parser('score', help='Current productivity score')
     trends = analytics_sub.add_parser('trends', help='Focus trends (sparkline)')
     trends.add_argument('--days', type=int, default=30, help='Trailing days')
-    analytics_sub.add_parser('hours', help='Best focus hours')
-    analytics_sub.add_parser('categories', help='Category breakdown')
+    hours_p = analytics_sub.add_parser('hours', help='Best focus hours')
+    hours_p.add_argument('--days', type=int, default=30, help='Trailing days')
+    cats_p = analytics_sub.add_parser('categories', help='Category breakdown')
+    cats_p.add_argument('--days', type=int, default=30, help='Trailing days')
     analytics_sub.add_parser('insights', help='Generate intelligence insights')
 
     return parser
@@ -324,9 +329,12 @@ def _handle_analytics_command(args: argparse.Namespace) -> int:
         )
         if getattr(args, 'json', False):
             import json as _json
-            print(_json.dumps(report, default=str, indent=2))
+            import dataclasses
+            print(_json.dumps(dataclasses.asdict(report), indent=2))
         else:
-            print(format_weekly_report(report))
+            # Enrich the report with full category breakdown for the bar chart
+            categories = engine.category_breakdown(days=7)
+            print(format_weekly_report(report, categories))
         return 0
 
     if cmd == 'score':
@@ -386,14 +394,9 @@ ACTIVE_POMO_PATH = Path.home() / '.deep_work_assistant' / 'active_pomodoro.json'
 def _save_active_pomo(timer: PomodoroTimer) -> None:
     """Persist the active pomodoro timer state so subcommands can find it."""
     ACTIVE_POMO_PATH.parent.mkdir(parents=True, exist_ok=True)
-    status = timer.status()
-    if timer.session:
-        status['work_minutes'] = timer.config.work_minutes
-        status['short_break_minutes'] = timer.config.short_break_minutes
-        status['long_break_minutes'] = timer.config.long_break_minutes
-        status['pomodoros_before_long'] = timer.config.pomodoros_before_long
+    state = timer.save_state()
     ACTIVE_POMO_PATH.write_text(
-        __import__('json').dumps(status, indent=2), encoding='utf-8'
+        __import__('json').dumps(state, indent=2), encoding='utf-8'
     )
 
 
@@ -404,15 +407,9 @@ def _load_active_pomo() -> PomodoroTimer | None:
     try:
         import json
         data = json.loads(ACTIVE_POMO_PATH.read_text(encoding='utf-8'))
-        if data.get('state') == 'idle' or 'session_id' not in data:
+        if data.get('session') is None:
             return None
-        config = PomodoroConfig(
-            work_minutes=data.get('work_minutes', 25),
-            short_break_minutes=data.get('short_break_minutes', 5),
-            long_break_minutes=data.get('long_break_minutes', 15),
-            pomodoros_before_long=data.get('pomodoros_before_long', 4),
-        )
-        return PomodoroTimer(config)
+        return PomodoroTimer.restore_state(data)
     except Exception:
         return None
 

@@ -799,8 +799,11 @@ def _minutes_to_hours(m: int) -> str:
     return f'{mins}m'
 
 
-def format_weekly_report(report: WeeklyReport) -> str:
-    """Multi-line formatted weekly report with ASCII bar chart."""
+def format_weekly_report(report: WeeklyReport, category_breakdown: dict[str, int] | None = None) -> str:
+    """Multi-line formatted weekly report with ASCII bar chart.
+
+    If *category_breakdown* is provided, a full bar chart is rendered.
+    """
     lines: list[str] = [
         '═' * 52,
         f'  Weekly Deep Work Report — W{report.week} ({report.start_date} to {report.end_date})',
@@ -819,13 +822,21 @@ def format_weekly_report(report: WeeklyReport) -> str:
         f'  Break effect. : {report.break_effectiveness:.0%}',
         f'  Productivity  : {report.productivity_score}/100',
         '',
-        '  ── Category breakdown ──',
     ]
 
-    # Recompute category breakdown for ASCII bar chart
-    # (we don't have the raw sessions here, so the bar chart is a stub that
-    #  callers can populate from category_breakdown; we include the dominant.)
-    lines.append(f'    {report.dominant_category}  (dominant)')
+    # ── Category breakdown (ASCII bar chart) ──
+    if category_breakdown:
+        lines.append('  ── Category breakdown ──')
+        sorted_cats = sorted(category_breakdown.items(), key=lambda x: -x[1])
+        max_minutes = max(v for _, v in sorted_cats) if sorted_cats else 1
+        bar_width = 20
+        for cat, minutes in sorted_cats:
+            filled = round((minutes / max_minutes) * bar_width) if max_minutes > 0 else 0
+            bar = '█' * filled + '░' * (bar_width - filled)
+            hours_str = _minutes_to_hours(minutes)
+            lines.append(f'    {cat:20s} {bar} {hours_str}')
+    else:
+        lines.append(f'    {report.dominant_category}  (dominant)')
 
     lines.append('')
     lines.append('─' * 52)

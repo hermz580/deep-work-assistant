@@ -239,7 +239,8 @@ class MindfulnessCoach:
         if not self._active or self._session is None:
             return []
         self._active = False
-        self._session.completed = True
+        self._session.completed = False
+        self._log_completed()
         return [
             MindfulnessEvent(
                 kind='interrupted',
@@ -351,7 +352,7 @@ class MindfulnessCoach:
     def _guidance_breathing(self) -> str:
         pattern = BREATHING_PATTERNS.get(self._pattern_name, BREATHING_PATTERNS['box'])
         phase_name, phase_duration = pattern[self._phase_index]
-        remaining = max(0, int(phase_duration - self._phase_elapsed + 1))
+        remaining = max(0, int(phase_duration - self._phase_elapsed))
         countdown = '... '.join(str(i) for i in range(remaining, 0, -1))
         return f'{phase_name}... {countdown}'
 
