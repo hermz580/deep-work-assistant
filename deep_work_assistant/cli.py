@@ -25,6 +25,9 @@ from .obsidian_log import append_session_log
 from .notifier import DesktopNotifier
 from .runtime import WindowsActivityProbe
 from .voice import ChainedNotifier, VoiceNotifier
+from .pomodoro import PomodoroTimer, PomodoroConfig, PomodoroState, load_history as load_pomo_history
+from .mindfulness import MindfulnessCoach, MindfulnessType
+from .analytics import AnalyticsEngine, format_weekly_report, format_productivity_score, format_insights, format_trend
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,6 +95,53 @@ def build_parser() -> argparse.ArgumentParser:
     card_search = card_sub.add_parser('search', help='Search cards')
     card_search.add_argument('query', help='Search query')
 
+    # ── Pomodoro timer ──
+    pomo_p = sub.add_parser('pomo', help='Pomodoro timer')
+    pomo_sub = pomo_p.add_subparsers(dest='pomo_command')
+
+    pomo_start = pomo_sub.add_parser('start', help='Start a pomodoro session')
+    pomo_start.add_argument('--work', type=int, default=25, help='Work minutes')
+    pomo_start.add_argument('--short-break', type=int, default=5, help='Short break minutes')
+    pomo_start.add_argument('--long-break', type=int, default=15, help='Long break minutes')
+    pomo_start.add_argument('--pomodoros', type=int, default=4, help='Pomodoros before long break')
+    pomo_start.add_argument('--card', help='Link to a Kanban card ID')
+
+    pomo_sub.add_parser('status', help='Show current pomodoro status')
+    pomo_sub.add_parser('next', help='Transition to next phase')
+    pomo_sub.add_parser('skip', help='Skip current break')
+    pomo_sub.add_parser('stop', help='Stop pomodoro session')
+    pomo_sub.add_parser('history', help='Show pomodoro history')
+
+    # ── Mindfulness exercises ──
+    mindful_p = sub.add_parser('mindful', help='Mindfulness exercises')
+    mindful_sub = mindful_p.add_subparsers(dest='mindful_command')
+
+    breath_p = mindful_sub.add_parser('breathe', help='Breathing exercise')
+    breath_p.add_argument('--type', choices=['box', '4-7-8', 'simple'], default='box',
+                          help='Breathing pattern')
+    breath_p.add_argument('--minutes', type=int, default=3, help='Duration in minutes')
+
+    countdown_p = mindful_sub.add_parser('countdown', help='Silent countdown timer')
+    countdown_p.add_argument('--minutes', type=int, default=5, help='Duration in minutes')
+
+    mindful_sub.add_parser('body-scan', help='Guided body scan relaxation')
+
+    gratitude_p = mindful_sub.add_parser('gratitude', help='Gratitude reflection')
+    gratitude_p.add_argument('--minutes', type=int, default=3, help='Duration in minutes')
+
+    # ── Analytics ──
+    analytics_p = sub.add_parser('analytics', aliases=['stats'],
+                                 help='Health insights and analytics')
+    analytics_sub = analytics_p.add_subparsers(dest='analytics_command')
+
+    analytics_sub.add_parser('week', help='Weekly focus report')
+    analytics_sub.add_parser('score', help='Current productivity score')
+    trends = analytics_sub.add_parser('trends', help='Focus trends (sparkline)')
+    trends.add_argument('--days', type=int, default=30, help='Trailing days')
+    analytics_sub.add_parser('hours', help='Best focus hours')
+    analytics_sub.add_parser('categories', help='Category breakdown')
+    analytics_sub.add_parser('insights', help='Generate intelligence insights')
+
     return parser
 
 
@@ -134,6 +184,18 @@ def main(argv: list[str] | None = None) -> int:
     # ── Kanban cards ──
     if command == 'card':
         return _handle_card_command(args)
+
+    # ── Pomodoro timer ──
+    if command == 'pomo':
+        return _handle_pomo_command(args)
+
+    # ── Mindfulness exercises ──
+    if command == 'mindful':
+        return _handle_mindful_command(args) or 0
+
+    # ── Analytics ──
+    if command == 'analytics':
+        return _handle_analytics_command(args)
 
     history = HistoryStore(args.history)
     return run_live_loop(
@@ -245,7 +307,305 @@ def _handle_card_command(args: argparse.Namespace) -> int:
         return 0
 
     print('❌ Unknown card command. Use: add, move, list, delete, search')
+    return 0
+
+
+# ── Analytics command handler ────────────────────────────────────────────
+
+def _handle_analytics_command(args: argparse.Namespace) -> int:
+    """Handle analytics subcommands."""
+    cmd = args.analytics_command
+    engine = AnalyticsEngine()
+
+    if cmd == 'week':
+        report = engine.weekly_report(
+            year=getattr(args, 'year', None),
+            week=getattr(args, 'week', None),
+        )
+        if getattr(args, 'json', False):
+            import json as _json
+            print(_json.dumps(report, default=str, indent=2))
+        else:
+            print(format_weekly_report(report))
+        return 0
+
+    if cmd == 'score':
+        score = engine.productivity_score(days=30)
+        print(format_productivity_score(score))
+        return 0
+
+    if cmd == 'trends':
+        trend = engine.focus_trend(days=getattr(args, 'days', 30))
+        print(format_trend(trend))
+        return 0
+
+    if cmd == 'hours':
+        hours = engine.best_hours(days=getattr(args, 'days', 30))
+        if not hours:
+            print('  (no session data)')
+            return 0
+        print('  Best focus hours:')
+        for hour, minutes in hours:
+            print(f'    {hour:02d}:00-{hour + 1:02d}:00  —  {minutes} min')
+        return 0
+
+    if cmd == 'categories':
+        breakdown = engine.category_breakdown(days=getattr(args, 'days', 30))
+        if not breakdown:
+            print('  (no session data)')
+            return 0
+        print('  Category breakdown:')
+        total = sum(breakdown.values())
+        for cat, minutes in sorted(breakdown.items(), key=lambda x: -x[1]):
+            pct = minutes / total * 100 if total else 0
+            print(f'    {cat:20s} {_minutes_to_hours_short(minutes):>8s}  ({pct:.0f}%)')
+        return 0
+
+    if cmd == 'insights':
+        insights = engine.generate_insights(days=30)
+        print(format_insights(insights))
+        return 0
+
+    print('❌ Unknown analytics command. Use: week, score, trends, hours, categories, insights')
     return 1
+
+
+def _minutes_to_hours_short(m: int) -> str:
+    hours = m // 60
+    mins = m % 60
+    if hours:
+        return f'{hours}h {mins:02d}m'
+    return f'{mins}m'
+
+
+# ── Pomodoro command handler ────────────────────────────────────────────────
+
+ACTIVE_POMO_PATH = Path.home() / '.deep_work_assistant' / 'active_pomodoro.json'
+
+
+def _save_active_pomo(timer: PomodoroTimer) -> None:
+    """Persist the active pomodoro timer state so subcommands can find it."""
+    ACTIVE_POMO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    status = timer.status()
+    if timer.session:
+        status['work_minutes'] = timer.config.work_minutes
+        status['short_break_minutes'] = timer.config.short_break_minutes
+        status['long_break_minutes'] = timer.config.long_break_minutes
+        status['pomodoros_before_long'] = timer.config.pomodoros_before_long
+    ACTIVE_POMO_PATH.write_text(
+        __import__('json').dumps(status, indent=2), encoding='utf-8'
+    )
+
+
+def _load_active_pomo() -> PomodoroTimer | None:
+    """Restore the active pomodoro timer from saved state, or None."""
+    if not ACTIVE_POMO_PATH.exists():
+        return None
+    try:
+        import json
+        data = json.loads(ACTIVE_POMO_PATH.read_text(encoding='utf-8'))
+        if data.get('state') == 'idle' or 'session_id' not in data:
+            return None
+        config = PomodoroConfig(
+            work_minutes=data.get('work_minutes', 25),
+            short_break_minutes=data.get('short_break_minutes', 5),
+            long_break_minutes=data.get('long_break_minutes', 15),
+            pomodoros_before_long=data.get('pomodoros_before_long', 4),
+        )
+        return PomodoroTimer(config)
+    except Exception:
+        return None
+
+
+def _clear_active_pomo() -> None:
+    ACTIVE_POMO_PATH.unlink(missing_ok=True)
+
+
+def _handle_pomo_command(args: argparse.Namespace) -> int:
+    """Handle pomodoro subcommands."""
+    cmd = args.pomo_command
+
+    if cmd == 'start':
+        config = PomodoroConfig(
+            work_minutes=args.work,
+            short_break_minutes=args.short_break,
+            long_break_minutes=args.long_break,
+            pomodoros_before_long=args.pomodoros,
+        )
+        timer = PomodoroTimer(config)
+        timer.start(card_id=args.card)
+        _save_active_pomo(timer)
+
+        print(f'🍅 Pomodoro session started (work={args.work}m, break={args.short_break}m)')
+        session_id = timer.session.session_id if timer.session else '?'
+        print(f'   Session: {session_id}')
+        if args.card:
+            print(f'   Card:    {args.card}')
+
+        try:
+            while timer.session is not None:
+                time.sleep(1)
+                now = datetime.now(timezone.utc)
+                events = timer.tick(now)
+                for event in events:
+                    _handle_pomo_event(event, timer)
+                _save_active_pomo(timer)
+        except KeyboardInterrupt:
+            summary = timer.stop()
+            _clear_active_pomo()
+            pomos = summary.get('pomodoros_completed', 0)
+            total_m = summary.get('total_work_minutes', 0)
+            print(f'\n🍅 Pomodoro session ended — {pomos} pomodoros completed ({total_m}m total)')
+        return 0
+
+    if cmd == 'status':
+        timer = _load_active_pomo()
+        if timer is None:
+            print('🍅 No active pomodoro session.')
+            print('   Start one with: deep-work-assistant pomo start')
+            return 0
+        s = timer.status()
+        state = s['state']
+        remaining = s['remaining_minutes']
+        pomo_num = s['current_pomodoro']
+        completed = s['pomodoros_completed']
+        print(f'🍅 Pomodoro: {state} (pomodoro #{pomo_num}, {completed} completed)')
+        if state != 'idle':
+            print(f'   Remaining: {remaining:.1f}m')
+        return 0
+
+    if cmd == 'next':
+        timer = _load_active_pomo()
+        if timer is None:
+            print('❌ No active pomodoro session.')
+            return 1
+        events = timer.transition()
+        for event in events:
+            _handle_pomo_event(event, timer)
+        if timer.session:
+            _save_active_pomo(timer)
+        else:
+            _clear_active_pomo()
+        return 0
+
+    if cmd == 'skip':
+        timer = _load_active_pomo()
+        if timer is None:
+            print('❌ No active pomodoro session.')
+            return 1
+        result = timer.skip_break()
+        if result is None:
+            print('❌ Not in a break phase. Use "next" to transition.')
+            return 1
+        _handle_pomo_event(result, timer)
+        _save_active_pomo(timer)
+        return 0
+
+    if cmd == 'stop':
+        timer = _load_active_pomo()
+        if timer is None:
+            print('❌ No active pomodoro session.')
+            return 1
+        summary = timer.stop()
+        _clear_active_pomo()
+        pomos = summary.get('pomodoros_completed', 0)
+        total_m = summary.get('total_work_minutes', 0)
+        print(f'🍅 Pomodoro stopped — {pomos} pomodoros completed ({total_m}m total)')
+        return 0
+
+    if cmd == 'history':
+        records = load_pomo_history(limit=20)
+        if not records:
+            print('  (no pomodoro history found)')
+            return 0
+        print('🍅 Recent pomodoros:')
+        for r in reversed(records[-10:]):
+            started = r.get('started_at', '?')[:16]
+            mins = r.get('work_minutes', '?')
+            card = f' [card: {r["card_id"]}]' if r.get('card_id') else ''
+            print(f'   #{r.get("pomodoro_number", "?")} — {started} — {mins}m{card}')
+        return 0
+
+    print('❌ Unknown pomo command. Use: start, status, next, skip, stop, history')
+    return 1
+
+
+def _handle_pomo_event(event, timer: PomodoroTimer) -> None:
+    """Print a message for a pomodoro event."""
+    kind = event.kind
+    if kind == 'pomodoro_completed':
+        s = timer.status()
+        print(f'✅ Pomodoro #{s["current_pomodoro"] - 1} completed!')
+    elif kind == 'short_break':
+        s = timer.status()
+        print(f'☕ Short break ({s["remaining_minutes"]:.0f}m) — stretch, hydrate, rest your eyes')
+    elif kind == 'long_break':
+        s = timer.status()
+        print(f'🌟 Long break ({s["remaining_minutes"]:.0f}m) — well earned! Step away from the screen')
+    elif kind == 'started':
+        s = timer.status()
+        print(f'▶️  Work phase #{s["current_pomodoro"]} ({s["remaining_minutes"]:.0f}m remaining)')
+    elif kind == 'work_elapsed':
+        print('⏰ Work time is up! Press "next" to start your break, or continue working.')
+    elif kind == 'break_elapsed':
+        print('⏰ Break is over! Press "next" to start the next work phase.')
+
+
+# ── Mindfulness command handler ─────────────────────────────────────────────
+
+def _handle_mindful_command(args: argparse.Namespace) -> int | None:
+    """Handle mindfulness subcommands."""
+    cmd = args.mindful_command
+    coach = MindfulnessCoach()
+
+    if cmd == 'breathe':
+        coach.start(MindfulnessType.BREATHING, duration_minutes=args.minutes)
+        pattern = args.type
+        coach._pattern_name = pattern  # Set breathing pattern
+        print(f'🧘 Breathing exercise: {pattern} ({args.minutes}m)')
+        return _run_mindful_loop(coach)
+
+    if cmd == 'countdown':
+        coach.start(MindfulnessType.COUNTDOWN, duration_minutes=args.minutes)
+        print(f'⏱️  Countdown timer: {args.minutes}m')
+        return _run_mindful_loop(coach)
+
+    if cmd == 'body-scan':
+        coach.start(MindfulnessType.BODY_SCAN, duration_minutes=5)
+        print('🧘 Body scan — 5 minute progressive relaxation')
+        return _run_mindful_loop(coach)
+
+    if cmd == 'gratitude':
+        coach.start(MindfulnessType.GRATITUDE, duration_minutes=args.minutes)
+        print(f'🙏 Gratitude reflection ({args.minutes}m)')
+        return _run_mindful_loop(coach)
+
+    print('❌ Unknown mindful command. Use: breathe, countdown, body-scan, gratitude')
+    return 1
+
+
+def _run_mindful_loop(coach: MindfulnessCoach) -> int:
+    """Run a mindfulness session loop, printing guidance and handling events."""
+    try:
+        while coach.status().get('active', False):
+            guidance = coach.get_guidance()
+            if guidance:
+                # Use \r to overwrite the same line for countdown/breathing
+                print(f'\r{guidance}', end='', flush=True)
+            time.sleep(1)
+            now = datetime.now(timezone.utc)
+            events = coach.tick(now)
+            for event in events:
+                if event.kind == 'session_completed':
+                    print()
+                    print('✅ Session complete. 🙏')
+                elif event.kind == 'interrupted':
+                    print()
+                    print('⏹️  Session interrupted.')
+    except KeyboardInterrupt:
+        coach.interrupt()
+        print('\n⏹️  Session interrupted.')
+    return 0
 
 
 def run_live_loop(

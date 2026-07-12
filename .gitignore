@@ -11,3 +11,5 @@ dist/
 .dwa-simulated-history.jsonl
 .env
 .env.*
+.hermes/
+__pycache__/
