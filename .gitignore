@@ -12,4 +12,8 @@ dist/
 .env
 .env.*
 .hermes/
-__pycache__/
+
+# Personal / generated — not for public repos
+startup/
+*.vbs
+local_config.bat
