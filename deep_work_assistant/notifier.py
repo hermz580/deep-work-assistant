@@ -10,11 +10,56 @@ try:
 except ImportError:  # pragma: no cover - non-Windows fallback
     winsound = None
 
+from .interactive_popup import (
+    load_skip_state,
+    should_escalate,
+    spawn_interactive_popup,
+)
+from .overlay import spawn_stretch_overlay
+
+try:
+    from .messages import get_stretch_suggestions
+except ImportError:  # pragma: no cover
+    get_stretch_suggestions = None
+
 
 class DesktopNotifier:
     def __init__(self, app_id: str = 'Deep Work Assistant', dry_run: bool = False) -> None:
         self.app_id = app_id
         self.dry_run = dry_run
+
+    def notify_reminder(self, stage: str, title: str, message: str, category: str = 'general') -> bool:
+        """Send an interactive, confirmable reminder for *stage*.
+
+        Normally spawns the interactive Yes/Skip popup; when the stretch stage
+        has been skipped repeatedly (consecutive skips >= 2), escalates to the
+        fullscreen stretch overlay instead.
+        """
+        if self.dry_run:
+            print(f'[interactive-reminder] {stage}: {title} — {message}')
+            return True
+
+        skip_state = load_skip_state()
+        if should_escalate(skip_state, stage):
+            suggestions = get_stretch_suggestions(category, count=2) if get_stretch_suggestions else []
+            spawned = spawn_stretch_overlay(suggestions=suggestions)
+            print(f'[deep-work-assistant] stretch skipped {skip_state.get(stage, 0)}x — escalating to overlay')
+        else:
+            spawned = spawn_interactive_popup(stage, message)
+        self._play_attention_sound()
+
+        # Also fire the Windows toast so the reminder shows in Action Center.
+        script = self._build_powershell_script(title, message, self.app_id)
+        try:
+            subprocess.run(
+                ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        return spawned
 
     def notify(self, title: str, message: str) -> bool:
         if self.dry_run:

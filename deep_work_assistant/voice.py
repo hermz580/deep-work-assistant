@@ -162,6 +162,19 @@ class ChainedNotifier:
             self.voice.speak(f'{title}. {message.split(chr(10))[0]}')
         return desktop_ok
 
+    def notify_reminder(self, stage: str, title: str, message: str, category: str = 'general') -> bool:
+        """Interactive confirmable reminder (falls back to plain notify)."""
+        if self.pre_announce:
+            self.voice.speak(f'{title}. {message.split(chr(10))[0]}')
+        notify_interactive = getattr(self.desktop, 'notify_reminder', None)
+        if callable(notify_interactive):
+            desktop_ok = notify_interactive(stage, title, message, category)
+        else:
+            desktop_ok = self.desktop.notify(title, message)
+        if not self.pre_announce:
+            self.voice.speak(f'{title}. {message.split(chr(10))[0]}')
+        return desktop_ok
+
     def speak_session_start(self, message: str) -> None:
         """Speak the session-start motivational message."""
         self.voice.speak(message)
