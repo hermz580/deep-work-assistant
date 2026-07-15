@@ -27,6 +27,41 @@ A local Windows assistant that detects focused work from active-window stability
 | **Kanban board** | Local SQLite-backed project management — plan → do → review |
 | **31 new tests** | 64 tests total, all passing |
 
+## New in v0.4.0 — Interactive Reminders, Stretch Enforcement & Agent Detection
+
+### 💬 Interactive confirmable reminders
+
+Reminders are no longer passive. Each reminder (hydration / stretch / eat) spawns a topmost popup asking a direct question — e.g. *"💧 Hydration time — did you drink water?"* — with two big buttons: **✅ Yes, done** and **⏭️ Skip**.
+
+- The popup runs as a detached `pythonw` subprocess, so it never blocks the assistant loop.
+- The choice is appended to `~/.deep_work_assistant/reminder_responses.jsonl` (`confirmed` / `skipped` / `timeout`) and picked up asynchronously by the run loop.
+- The popup auto-times-out after 120 seconds (logged as `timeout`).
+- Consecutive skips per stage are tracked in `~/.deep_work_assistant/reminder_skip_state.json`; confirming resets the counter.
+- Responses show up in the Obsidian session log as ✅ confirmed / ⏭️ skipped.
+
+### 🧘 Enforced stretch overlay
+
+Skip the stretch reminder **2 times in a row** and the assistant escalates: instead of a small popup, a fullscreen, always-on-top overlay appears — dark background, big *"Stretch break — 60 seconds"* text, a live countdown, and two stretch suggestions matched to your work category.
+
+- It's just a window: **no background process is blocked or killed** — builds, agents, and downloads keep running underneath.
+- **Escape hatch:** type `skip` in the small entry at the bottom and press Enter to dismiss it (logged as `overridden`, still counts as a skip).
+- Letting the countdown finish logs `completed` and resets the stretch skip counter.
+- *Limitation:* the overlay covers the **primary monitor only**. On multi-monitor setups, secondary screens are not covered.
+
+### 🤖 Human vs agent activity detection
+
+If you run AI agents that drive windows/terminals while you're away, `GetLastInputInfo` still only reflects *real* human keyboard/mouse input. The engine now classifies each sample:
+
+- **human-active** — recent physical input (idle ≤ ~120s)
+- **agent-active** — window title / foreground app changing while human idle keeps rising
+- **idle** — nothing changing, no input
+
+Consequences:
+
+- Session summaries carry `human_active_seconds` and `agent_active_seconds`.
+- **Reminder timers count human-active time only** — hydration/stretch/eat countdowns pause while agents run or you're idle, so you won't get told to hydrate after 3 hours of Hermes doing the work.
+- Sessions that are >80% agent-active are tagged `ended_reason: agent-session` and logged in Obsidian as `> [!note]+ 🤖 Agent Work - <duration>` instead of counting as personal deep work. Mixed sessions show human 🧑 / agent 🤖 time-split lines.
+
 ## New in v0.3.0 — Kanban Board
 
 The Deep Work Assistant now includes a **local Kanban board** that lives alongside your focus tracker. Plan tasks, track deep work time against them, and watch the board auto-suggest cards based on what you're working on.
