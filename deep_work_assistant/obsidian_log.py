@@ -18,6 +18,15 @@ def _build_focus_streak_badge(streak: int) -> str:
     return ''
 
 
+def _format_duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    if seconds >= 3600:
+        return f'{seconds // 3600}h {(seconds % 3600) // 60}m'
+    if seconds >= 60:
+        return f'{seconds // 60}m {seconds % 60}s'
+    return f'{seconds}s'
+
+
 def append_session_log(
     vault_path: Path,
     summary: SessionSummary,
@@ -39,7 +48,10 @@ def append_session_log(
         dur_str = f'{dur}s'
 
     # --- Session header (colored callout based on duration) ---
-    if dur >= 7200:        # 2h+ deep flow
+    agent_dominated = bool(getattr(summary, 'agent_dominated', False))
+    if agent_dominated:
+        header = f'> [!note]+ 🤖 Agent Work - {dur_str}'
+    elif dur >= 7200:        # 2h+ deep flow
         header = f'> [!success]+ 🌊 Deep Flow - {dur_str}'
     elif dur >= 3600:      # 1-2h good session
         header = f'> [!check]+ ✅ Focus Block - {dur_str}'
@@ -57,6 +69,13 @@ def append_session_log(
             f'> **primary app:** `{summary.primary_app}`',
             f'> **ended:** {summary.ended_reason}',
     ]
+
+    # --- Human vs agent activity split ---
+    human_s = int(getattr(summary, 'human_active_seconds', 0) or 0)
+    agent_s = int(getattr(summary, 'agent_active_seconds', 0) or 0)
+    if agent_s > 0:
+        section_lines.append(f'> **human active:** {_format_duration(human_s)} 🧑')
+        section_lines.append(f'> **agent active:** {_format_duration(agent_s)} 🤖')
 
     # --- Idle indicator ---
     idle = summary.average_idle_seconds
@@ -90,7 +109,11 @@ def append_session_log(
             # Color-code by outcome type
             icons: dict[str, str] = {
                 'completed': '✅',
+                'confirmed': '✅',
+                'skipped': '⏭️',
                 'dismissed': '⏭️',
+                'overridden': '⏭️',
+                'timeout': '⌛',
                 'missed': '❌',
                 'snoozed': '⏰',
             }

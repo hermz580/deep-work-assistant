@@ -16,6 +16,13 @@ DEFAULT_REMINDER_PLAN = (60, 120, 180)
 DEFAULT_RESPONSE_WINDOW_MINUTES = 10
 STREAK_FILE = 'deep_work_streak.json'
 
+# Idle threshold (seconds of no *human* input) above which foreground/window
+# changes are attributed to automated agents rather than the human.
+AGENT_IDLE_THRESHOLD_SECONDS = 120
+# Sessions with more than this fraction of agent-active time are tagged as
+# agent sessions instead of personal deep work.
+AGENT_SESSION_FRACTION = 0.8
+
 
 def clamp(value: float, low: int, high: int) -> int:
     return int(max(low, min(high, round(value))))
@@ -57,6 +64,34 @@ class ActivitySample:
     process_name: str
     window_title: str
     idle_seconds: int
+
+
+def classify_sample(
+    previous: 'ActivitySample | None',
+    sample: 'ActivitySample',
+    agent_idle_threshold: int = AGENT_IDLE_THRESHOLD_SECONDS,
+) -> str:
+    """Classify a sample as 'human-active', 'agent-active', or 'idle'.
+
+    ``idle_seconds`` comes from ``GetLastInputInfo`` and only reflects REAL
+    human input (physical keyboard/mouse).  AI agents driving the machine in
+    the background change window titles and the foreground window without
+    producing human input.  So:
+
+    - recent human input               -> human-active
+    - no human input, but the window
+      title / foreground app changed   -> agent-active
+    - no human input, nothing changed  -> idle
+    """
+    if sample.idle_seconds <= agent_idle_threshold:
+        return 'human-active'
+    if previous is not None:
+        window_changed = sample.window_title != previous.window_title
+        process_changed = sample.process_name != previous.process_name
+        idle_rising = sample.idle_seconds >= previous.idle_seconds
+        if (window_changed or process_changed) and idle_rising:
+            return 'agent-active'
+    return 'idle'
 
 
 @dataclass(frozen=True)
@@ -185,6 +220,7 @@ class ReminderRecord:
     scheduled_minutes: int
     due_at: datetime
     sent_at: datetime | None = None
+    response: str | None = None  # interactive popup response: confirmed/skipped/timeout/overridden/completed
 
     def to_record(self, outcome: str, resolved_at: datetime) -> dict[str, Any]:
         return {
@@ -207,6 +243,8 @@ class ActiveSession:
     idle_total_seconds: int = 0
     sample_count: int = 0
     inactive_streak: int = 0
+    human_active_seconds: int = 0
+    agent_active_seconds: int = 0
     reminders: list[ReminderRecord] = field(default_factory=list)
 
 
@@ -220,6 +258,9 @@ class SessionSummary:
     focus_sample_count: int
     average_idle_seconds: int
     ended_reason: str
+    human_active_seconds: int = 0
+    agent_active_seconds: int = 0
+    agent_dominated: bool = False
     reminder_outcomes: list[dict[str, Any]] = field(default_factory=list)
 
     def to_record(self) -> dict[str, Any]:
@@ -232,6 +273,9 @@ class SessionSummary:
             'focus_sample_count': self.focus_sample_count,
             'average_idle_seconds': self.average_idle_seconds,
             'ended_reason': self.ended_reason,
+            'human_active_seconds': self.human_active_seconds,
+            'agent_active_seconds': self.agent_active_seconds,
+            'agent_dominated': self.agent_dominated,
             'reminder_outcomes': self.reminder_outcomes,
         }
 
@@ -246,6 +290,9 @@ class SessionSummary:
             focus_sample_count=int(record.get('focus_sample_count', 0)),
             average_idle_seconds=int(record.get('average_idle_seconds', 0)),
             ended_reason=str(record.get('ended_reason', 'unknown')),
+            human_active_seconds=int(record.get('human_active_seconds', 0)),
+            agent_active_seconds=int(record.get('agent_active_seconds', 0)),
+            agent_dominated=bool(record.get('agent_dominated', False)),
             reminder_outcomes=list(record.get('reminder_outcomes', [])),
         )
 
@@ -428,6 +475,12 @@ class DeepWorkAssistant:
                 self._start_streak = 0
         else:
             session = self.current_session
+            elapsed = max(0, int((sample.captured_at - session.last_sample_at).total_seconds()))
+            classification = classify_sample(self._previous_sample, sample)
+            if classification == 'human-active':
+                session.human_active_seconds += elapsed
+            elif classification == 'agent-active':
+                session.agent_active_seconds += elapsed
             session.last_sample_at = sample.captured_at
             session.sample_count += 1
             session.idle_total_seconds += max(0, int(sample.idle_seconds))
@@ -437,7 +490,10 @@ class DeepWorkAssistant:
                 session.inactive_streak = 0
 
             for reminder in session.reminders:
-                if reminder.sent_at is None and sample.captured_at >= reminder.due_at:
+                # Reminder countdowns accrue on HUMAN active time only: while
+                # agents drive the machine (or the human is idle), the timers
+                # pause instead of counting wall-clock time.
+                if reminder.sent_at is None and session.human_active_seconds >= reminder.scheduled_minutes * 60:
                     reminder.sent_at = sample.captured_at
                     # Build smarter, context-aware message
                     smart_message = build_reminder_message(
@@ -469,6 +525,19 @@ class DeepWorkAssistant:
 
         self._previous_sample = sample
         return events
+
+    def record_reminder_response(self, stage: str, response: str) -> bool:
+        """Attach an interactive popup/overlay response to the active session.
+
+        Returns True when a matching sent-but-unresolved reminder was found.
+        """
+        if self.current_session is None:
+            return False
+        for reminder in self.current_session.reminders:
+            if reminder.stage == stage and reminder.sent_at is not None and reminder.response is None:
+                reminder.response = response
+                return True
+        return False
 
     def finalize_session(self, finished_at: datetime | None = None, ended_reason: str = 'manual') -> SessionSummary | None:
         if self.current_session is None:
@@ -520,6 +589,10 @@ class DeepWorkAssistant:
             if reminder.sent_at is None:
                 outcome = 'not_sent'
                 resolved_at = finished_at
+            elif reminder.response:
+                # Explicit interactive-popup / overlay response wins.
+                outcome = reminder.response
+                resolved_at = finished_at
             else:
                 deadline = reminder.sent_at + timedelta(minutes=self.response_window_minutes)
                 resolved_at = finished_at
@@ -531,15 +604,24 @@ class DeepWorkAssistant:
                     outcome = 'ignored'
             reminder_outcomes.append(reminder.to_record(outcome=outcome, resolved_at=resolved_at))
 
+        duration_seconds = max(0, int((finished_at - session.started_at).total_seconds()))
+        tracked = session.human_active_seconds + session.agent_active_seconds
+        agent_dominated = (
+            tracked > 0
+            and session.agent_active_seconds / tracked > AGENT_SESSION_FRACTION
+        )
         summary = SessionSummary(
             session_id=session.session_id,
             started_at=session.started_at,
             ended_at=finished_at,
             primary_app=session.primary_app,
-            duration_seconds=max(0, int((finished_at - session.started_at).total_seconds())),
+            duration_seconds=duration_seconds,
             focus_sample_count=session.focus_sample_count,
             average_idle_seconds=round(session.idle_total_seconds / session.sample_count) if session.sample_count else 0,
-            ended_reason=ended_reason,
+            ended_reason='agent-session' if agent_dominated else ended_reason,
+            human_active_seconds=session.human_active_seconds,
+            agent_active_seconds=session.agent_active_seconds,
+            agent_dominated=agent_dominated,
             reminder_outcomes=reminder_outcomes,
         )
 

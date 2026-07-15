@@ -50,3 +50,63 @@ def test_append_session_log_appends_to_existing_note(tmp_path: Path):
     assert 'Existing note' in text
     assert 'session-2' in text
     assert text.count('> [!success]+') == 1
+
+
+def make_agent_summary(agent_dominated: bool = True) -> SessionSummary:
+    return SessionSummary(
+        session_id='agent-session-1',
+        started_at=datetime(2026, 6, 3, 9, 0, tzinfo=timezone.utc),
+        ended_at=datetime(2026, 6, 3, 10, 30, tzinfo=timezone.utc),
+        primary_app='WindowsTerminal.exe',
+        duration_seconds=5400,
+        focus_sample_count=10,
+        average_idle_seconds=400,
+        ended_reason='agent-session' if agent_dominated else 'manual',
+        human_active_seconds=300,
+        agent_active_seconds=4800,
+        agent_dominated=agent_dominated,
+        reminder_outcomes=[],
+    )
+
+
+def test_agent_dominated_session_gets_agent_callout(tmp_path: Path):
+    note_path = append_session_log(tmp_path, make_agent_summary())
+    text = note_path.read_text(encoding='utf-8')
+    assert '> [!note]+ 🤖 Agent Work - 1h 30m' in text
+    assert '> [!success]+' not in text
+    assert '**ended:** agent-session' in text
+
+
+def test_agent_time_split_shown_when_agent_time_present(tmp_path: Path):
+    summary = make_agent_summary(agent_dominated=False)
+    note_path = append_session_log(tmp_path, summary)
+    text = note_path.read_text(encoding='utf-8')
+    assert '**human active:** 5m 0s 🧑' in text
+    assert '**agent active:** 1h 20m 🤖' in text
+
+
+def test_no_split_lines_for_pure_human_session(tmp_path: Path):
+    note_path = append_session_log(tmp_path, make_summary())
+    text = note_path.read_text(encoding='utf-8')
+    assert 'agent active' not in text
+    assert '🤖' not in text
+
+
+def test_confirmed_and_skipped_outcome_icons(tmp_path: Path):
+    summary = SessionSummary(
+        session_id='session-3',
+        started_at=datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc),
+        ended_at=datetime(2026, 6, 4, 11, 10, tzinfo=timezone.utc),
+        primary_app='code.exe',
+        duration_seconds=7800,
+        focus_sample_count=10,
+        average_idle_seconds=25,
+        ended_reason='manual',
+        reminder_outcomes=[
+            {'stage': 'hydration', 'outcome': 'confirmed'},
+            {'stage': 'stretch', 'outcome': 'skipped'},
+        ],
+    )
+    text = append_session_log(tmp_path, summary).read_text(encoding='utf-8')
+    assert '✅ **hydration:** confirmed' in text
+    assert '⏭️ **stretch:** skipped' in text

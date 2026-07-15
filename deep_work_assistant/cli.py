@@ -20,6 +20,12 @@ from .engine import (
     summary_from_record,
 )
 from .history import HistoryStore
+from .interactive_popup import (
+    ReminderResponseWatcher,
+    load_skip_state,
+    record_response,
+    save_skip_state,
+)
 from .kanban import COLUMNS, KanbanBoard, Card, format_board, format_card_list
 from .obsidian_log import append_session_log
 from .notifier import DesktopNotifier
@@ -739,11 +745,25 @@ def run_live_loop(
     print(f'[deep-work-assistant] kanban board: {board.db_path} ({board.total_cards()} cards)')
 
     try:
+        response_watcher = ReminderResponseWatcher()
         while True:
             sample = probe.sample()
             events = assistant.process_sample(sample)
 
             _handle_events(events, notifier, history, assistant, obsidian_vault, board, active_card_id)
+
+            # Poll interactive popup / overlay responses asynchronously.
+            for response_record in response_watcher.poll():
+                stage = str(response_record.get('stage', ''))
+                response = str(response_record.get('response', ''))
+                if not stage or not response:
+                    continue
+                skip_state = record_response(load_skip_state(), stage, response)
+                save_skip_state(skip_state)
+                assistant.record_reminder_response(stage, response)
+                print(f'[deep-work-assistant] reminder response: {stage} -> {response} '
+                      f'(consecutive skips: {skip_state.get(stage, 0)})')
+
             time.sleep(max(1.0, float(poll_interval)))
     except KeyboardInterrupt:
         summary = assistant.finalize_session(datetime.now(timezone.utc), ended_reason='manual')
@@ -819,7 +839,12 @@ def _handle_events(
                     for s in suggestions[:3]:
                         print(f"   • {s.title} ({s.card_id})")
         elif event.kind == 'reminder_due':
-            notifier.notify(event.data['title'], event.data['message'])
+            notifier.notify_reminder(
+                event.data['stage'],
+                event.data['title'],
+                event.data['message'],
+                event.data.get('category', 'general'),
+            )
             print(f"[deep-work-assistant] reminder sent: {event.data['stage']} at {event.data['sent_at']}")
         elif event.kind == 'session_ended':
             summary = event.data['summary']
