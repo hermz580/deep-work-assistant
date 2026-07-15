@@ -12,7 +12,7 @@ if /I "%~1"=="simulate" set MODE=simulate
 if /I "%~1"=="plan" set MODE=plan
 if /I "%~1"=="run" set MODE=run
 
-set "OBSIDIAN_VAULT=F:\HermanHarp_Offload\Desktop\Documents\Obsidian Vault"
+set "OBSIDIAN_VAULT=C:\Users\HarpStar\OneDrive - Marc Joy Technologies\Desktop\Documents\Obsidian Vault"
 if not exist "%OBSIDIAN_VAULT%" set "OBSIDIAN_VAULT="
 
 if /I "%MODE%"=="run" (

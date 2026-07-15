@@ -1,8 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .engine import ReminderPlan, SessionSummary, format_plan
+
+
+def _build_focus_streak_badge(streak: int) -> str:
+    """Return a callout for the current focus streak."""
+    if streak >= 7:
+        return f'> [!success]- 🔥 Focus streak: {streak} days (🔥🔥🔥)'
+    elif streak >= 3:
+        return f'> [!success]- 🔥 Focus streak: {streak} days'
+    elif streak > 0:
+        s = 's' if streak > 1 else ''
+        return f'> [!info]- Focus streak: {streak} day{s}'
+    return ''
 
 
 def append_session_log(
@@ -15,27 +28,78 @@ def append_session_log(
 
     ended_local = summary.ended_at.astimezone()
     note_path = vault / f'{ended_local.date().isoformat()}.md'
+
+    # --- Duration formatting ---
+    dur = summary.duration_seconds
+    if dur >= 3600:
+        dur_str = f'{dur // 3600}h {(dur % 3600) // 60}m'
+    elif dur >= 60:
+        dur_str = f'{dur // 60}m {dur % 60}s'
+    else:
+        dur_str = f'{dur}s'
+
+    # --- Session header (colored callout based on duration) ---
+    if dur >= 7200:        # 2h+ deep flow
+        header = f'> [!success]+ 🌊 Deep Flow - {dur_str}'
+    elif dur >= 3600:      # 1-2h good session
+        header = f'> [!check]+ ✅ Focus Block - {dur_str}'
+    elif dur >= 1800:      # 30-60m
+        header = f'> [!info]+ Session - {dur_str}'
+    elif dur > 0:
+        header = f'> [!warning]+ Short Session - {dur_str}'
+    else:
+        header = f'> [!warning]+ Interrupted - {dur_str}'
+
     section_lines = [
-        '',
-        f'## Deep Work Assistant session {ended_local.strftime("%H:%M")}',
-        f'- session id: `{summary.session_id}`',
-        f'- primary app: `{summary.primary_app}`',
-        f'- duration: {summary.duration_seconds}s',
-        f'- ended reason: {summary.ended_reason}',
-        f'- average idle: {summary.average_idle_seconds}s',
+            '',
+            header,
+            f'> **session:** `{summary.session_id}`',
+            f'> **primary app:** `{summary.primary_app}`',
+            f'> **ended:** {summary.ended_reason}',
     ]
 
-    if plan is not None:
-        section_lines.append(f'- reminder plan: {format_plan(plan)}')
+    # --- Idle indicator ---
+    idle = summary.average_idle_seconds
+    if idle < 30:
+        section_lines.append('> **idle:** minimal 🟢')
+    elif idle < 120:
+        section_lines.append('> **idle:** moderate 🟡')
+    else:
+        section_lines.append(f'> **idle:** high ({int(idle)}s avg) 🔴')
 
+    # --- Streak badge ---
+    if hasattr(summary, 'focus_streak') and summary.focus_streak:
+        badge = _build_focus_streak_badge(summary.focus_streak)
+        if badge:
+            section_lines.append(f'>\n{badge}')
+
+    # --- Reminder plan ---
+    if plan is not None:
+        plan_str = format_plan(plan)
+        section_lines.append('>\n> [!tip]- Reminder plan')
+        for line in plan_str.strip().split('\n'):
+            section_lines.append(f'>   {line}')
+
+    # --- Reminder outcomes ---
     if summary.reminder_outcomes:
-        section_lines.append('- reminder outcomes:')
-        for reminder in summary.reminder_outcomes:
+        outcomes = summary.reminder_outcomes
+        section_lines.append(f'>\n> [!note]- Reminder outcomes ({len(outcomes)})')
+        for reminder in outcomes:
             stage = reminder.get('stage', 'reminder')
             outcome = reminder.get('outcome', 'unknown')
-            section_lines.append(f'  - {stage}: {outcome}')
+            # Color-code by outcome type
+            icons: dict[str, str] = {
+                'completed': '✅',
+                'dismissed': '⏭️',
+                'missed': '❌',
+                'snoozed': '⏰',
+            }
+            icon = icons.get(outcome, '•')
+            section_lines.append(f'>   {icon} **{stage}:** {outcome}')
 
+    section_lines.append('')
     section = '\n'.join(section_lines).rstrip() + '\n'
+
     if note_path.exists() and note_path.stat().st_size > 0:
         existing = note_path.read_text(encoding='utf-8')
         if not existing.endswith('\n'):
