@@ -36,7 +36,7 @@ SETTINGS_PATH = Path.home() / ".deep_work_assistant" / "ui_settings.json"
 ASSISTANT_LOG_PATH = Path.home() / ".deep_work_assistant" / "assistant-ui.log"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "theme": "cosmic",
+    "theme": "cinematic",
     "motion": "full",
     "auto_refresh_seconds": 15,
     "default_focus_minutes": 50,

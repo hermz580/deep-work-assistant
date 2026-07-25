@@ -177,6 +177,14 @@ class AnalyticsEngine:
             self._analytics_store = AnalyticsStore()
         return self._analytics_store
 
+    def _reference_end_date(self) -> date:
+        """Anchor rolling-window analytics to the newest available session."""
+        sessions = self.history_store.load_recent(limit=5000)
+        if not sessions:
+            return date.today()
+        latest = max((s.started_at.astimezone().date() for s in sessions), default=date.today())
+        return latest
+
     # ── Weekly report ───────────────────────────────────────────────────────
 
     def weekly_report(self, year: int | None = None, week: int | None = None) -> WeeklyReport:
@@ -316,9 +324,9 @@ class AnalyticsEngine:
           - break_adherence (20%): fraction of break reminders honoured
           - variety (10%): how many distinct app categories were used
         """
-        today = date.today()
-        start = today - timedelta(days=days - 1)
-        sessions = self._load_sessions_for_range(start, today)
+        end = self._reference_end_date()
+        start = end - timedelta(days=days - 1)
+        sessions = self._load_sessions_for_range(start, end)
 
         if not sessions:
             return ProductivityScore(
@@ -332,7 +340,7 @@ class AnalyticsEngine:
                 recommendations=['Complete at least one focus session to start tracking.'],
             )
 
-        pomodoros = self._load_pomodoros_for_range(start, today)
+        pomodoros = self._load_pomodoros_for_range(start, end)
         daily = self._compute_daily_aggregates(sessions, pomodoros)
 
         # ── focus_time ────────────────────────────────────────────────────
@@ -346,9 +354,11 @@ class AnalyticsEngine:
         # ── consistency ──────────────────────────────────────────────────
         # Count how many days in the range had at least one session
         session_dates = {s.started_at.astimezone().date().isoformat() for s in sessions}
-        total_days_in_range = max(1, (today - start).days + 1)
+        total_days_in_range = max(1, (end - start).days + 1)
         days_with_sessions = len(session_dates)
         consistency_score = round((days_with_sessions / total_days_in_range) * 100, 1)
+
+        # ── break_adherence ─────────────────────────────────────────────
 
         # ── break_adherence ─────────────────────────────────────────────
         total_reminders = 0
@@ -451,17 +461,17 @@ class AnalyticsEngine:
 
     def focus_trend(self, days: int = 30) -> list[dict[str, Any]]:
         """Return daily focus minutes for charting (newest last)."""
-        today = date.today()
-        start = today - timedelta(days=days - 1)
-        sessions = self._load_sessions_for_range(start, today)
-        pomodoros = self._load_pomodoros_for_range(start, today)
+        end = self._reference_end_date()
+        start = end - timedelta(days=days - 1)
+        sessions = self._load_sessions_for_range(start, end)
+        pomodoros = self._load_pomodoros_for_range(start, end)
         daily = self._compute_daily_aggregates(sessions, pomodoros)
 
         # Build a complete date range so missing days appear as 0
         by_date: dict[str, int] = {d.date: d.focus_minutes for d in daily}
         trend: list[dict[str, Any]] = []
         cursor = start
-        while cursor <= today:
+        while cursor <= end:
             iso = cursor.isoformat()
             trend.append({'date': iso, 'focus_minutes': by_date.get(iso, 0)})
             cursor += timedelta(days=1)
@@ -471,9 +481,9 @@ class AnalyticsEngine:
 
     def best_hours(self, days: int = 30) -> list[tuple[int, int]]:
         """Return top 3 hour buckets (hour, total_minutes) sorted desc."""
-        today = date.today()
-        start = today - timedelta(days=days - 1)
-        sessions = self._load_sessions_for_range(start, today)
+        end = self._reference_end_date()
+        start = end - timedelta(days=days - 1)
+        sessions = self._load_sessions_for_range(start, end)
 
         hour_minutes: Counter[int] = Counter()
         for s in sessions:
@@ -489,9 +499,9 @@ class AnalyticsEngine:
 
     def category_breakdown(self, days: int = 30) -> dict[str, int]:
         """Map category -> total focus minutes for the period."""
-        today = date.today()
-        start = today - timedelta(days=days - 1)
-        sessions = self._load_sessions_for_range(start, today)
+        end = self._reference_end_date()
+        start = end - timedelta(days=days - 1)
+        sessions = self._load_sessions_for_range(start, end)
 
         category_minutes: Counter[str] = Counter()
         for s in sessions:
@@ -504,9 +514,9 @@ class AnalyticsEngine:
 
     def break_effectiveness(self, days: int = 30) -> float:
         """Ratio of sessions where the user took a break after a reminder."""
-        today = date.today()
-        start = today - timedelta(days=days - 1)
-        sessions = self._load_sessions_for_range(start, today)
+        end = self._reference_end_date()
+        start = end - timedelta(days=days - 1)
+        sessions = self._load_sessions_for_range(start, end)
 
         total_reminders = 0
         total_breaks = 0
@@ -527,10 +537,10 @@ class AnalyticsEngine:
 
     def generate_insights(self, days: int = 30) -> list[str]:
         """Analyse data and return 3-5 natural language insights."""
-        today = date.today()
-        start = today - timedelta(days=days - 1)
-        sessions = self._load_sessions_for_range(start, today)
-        pomodoros = self._load_pomodoros_for_range(start, today)
+        end = self._reference_end_date()
+        start = end - timedelta(days=days - 1)
+        sessions = self._load_sessions_for_range(start, end)
+        pomodoros = self._load_pomodoros_for_range(start, end)
         daily = self._compute_daily_aggregates(sessions, pomodoros)
 
         insights: list[str] = []
