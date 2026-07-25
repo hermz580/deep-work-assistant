@@ -15,6 +15,10 @@ dev = ["pytest>=7.0"]
 
 [project.scripts]
 deep-work-assistant = "deep_work_assistant.cli:main"
+deep-work-ui = "deep_work_assistant.web_ui:main"
+
+[tool.setuptools.package-data]
+deep_work_assistant = ["ui/*.html", "ui/*.css", "ui/*.js"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
