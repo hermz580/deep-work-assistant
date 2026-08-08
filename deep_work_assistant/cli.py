@@ -68,6 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser('simulate', help='Run a dry-run scenario to verify the engine')
 
+    # ── Vision lane ──
+    vision_p = sub.add_parser('vision', help='Camera sensing (posture + motion)')
+    vision_sub = vision_p.add_subparsers(dest='vision_command')
+    vs = vision_sub.add_parser('status', help='Is the camera path + model ready?')
+    vs.set_defaults(vision_func=_vision_status)
+    vc = vision_sub.add_parser('check', help='One-shot posture + motion check')
+    vc.add_argument('--interval', type=float, default=2.0, help='Seconds between motion frames')
+    vc.set_defaults(vision_func=_vision_check)
+
     # ── Kanban board ──
     sub.add_parser('board', help='Show the Kanban board')
 
@@ -172,6 +181,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _vision_status(args) -> int:
+    """Report whether the camera path + pose model are ready."""
+    from . import vision as v
+    ok, reason = v.camera_available()
+    model = v.model_cache_dir() / v.POSE_MODEL_FILENAME
+    print(f"camera path : {'ready' if ok else reason}")
+    print(f"pose model  : {'present' if model.exists() else 'missing (downloads on first check)'}")
+    print(f"model cache : {v.model_cache_dir()}")
+    return 0 if ok else 1
+
+
+def _vision_check(args) -> int:
+    """One-shot posture + motion check against the real camera."""
+    from . import vision as v
+    result = v.run_check(interval=args.interval)
+    if not result.get("available"):
+        print(f"vision unavailable: {result.get('error')}")
+        return 1
+    print(f"motion score : {result.get('motion')}")
+    posture = result.get("posture")
+    if posture:
+        for k, val in posture.items():
+            print(f"  {k:16s}: {val}")
+    else:
+        print("posture      : none detected (no person in frame?)")
+    if result.get("error"):
+        print(f"note         : {result['error']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -181,6 +220,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_usage()
         print('error: no command provided')
         return 1
+
+    if command == 'vision':
+        if not getattr(args, 'vision_command', None):
+            print('error: vision requires a subcommand (status | check)')
+            return 1
+        return args.vision_func(args)
 
     if command == 'plan':
         history = HistoryStore(args.history)
