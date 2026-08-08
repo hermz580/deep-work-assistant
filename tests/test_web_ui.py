@@ -13,7 +13,7 @@ def test_ui_assets_exist() -> None:
 def test_parser_defaults_to_localhost() -> None:
     args = build_parser().parse_args(["--no-browser"])
     assert args.host == "127.0.0.1"
-    assert args.port == 8765
+    assert args.port == 8791
     assert args.no_browser is True
 
 

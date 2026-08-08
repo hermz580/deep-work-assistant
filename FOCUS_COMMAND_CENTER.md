@@ -17,7 +17,7 @@ pip install -e .
 deep-work-ui
 ```
 
-The interface opens at `http://127.0.0.1:8765`. The server binds to localhost by default, so other devices cannot access it unless the host option is deliberately changed.
+The interface opens at `http://127.0.0.1:8791`. The server binds to localhost by default, so other devices cannot access it unless the host option is deliberately changed. (Port 8791 is deliberately free of the SmartBook control room, which owns 8765 on this machine.)
 
 ## Functional surfaces
 

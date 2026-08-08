@@ -401,7 +401,7 @@ def _path_status(path: Path) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Deep Work Assistant Focus Command Center")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address; localhost by default")
-    parser.add_argument("--port", type=int, default=8765, help="Local web port")
+    parser.add_argument("--port", type=int, default=8791, help="Local web port")
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser automatically")
     return parser
 
