@@ -11,6 +11,7 @@ dependencies = ["psutil>=5.9"]
 
 [project.optional-dependencies]
 voice = ["edge-tts>=6.0"]
+vision = ["mediapipe>=1.0", "opencv-python>=4.8"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
