@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" data-theme="cosmic" data-motion="full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Deep Work Assistant // Advanced Work Board</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/app.v2.css">
+</head>
+<body>
+  <canvas id="ambientCanvas" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="app-shell">
+    <aside class="sidebar glass-panel">
+      <a class="brand" href="#command" aria-label="Deep Work Assistant home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span><strong>DEEP WORK ASSISTANT</strong><small>ADVANCED WORK BOARD</small></span>
+      </a>
+      <nav>
+        <button class="nav-item active" data-target="command"><span>◉</span> Advanced Board</button>
+        <button class="nav-item" data-target="board"><span>◇</span> Work Board</button>
+        <button class="nav-item" data-target="sessions"><span>≋</span> Session Intelligence</button>
+        <button class="nav-item" data-target="recovery"><span>⌁</span> Focus Core</button>
+        <button class="nav-item" data-target="settings"><span>⚙</span> System Config</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <label class="theme-label" for="themeSelect">Visual system</label>
+        <select id="themeSelect" aria-label="Visual system">
+          <option value="cinematic">Cinematic Void</option>
+          <option value="cosmic">Afrofuturist Cosmic</option>
+          <option value="liquid">Liquid Motion</option>
+          <option value="core">AI Core</option>
+        </select>
+        <div class="local-badge"><span class="status-dot"></span> Local-only data</div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow" id="dateLabel">LOCAL FOCUS ENVIRONMENT</p><h1 id="pageTitle">Advanced Board</h1></div>
+        <div class="top-actions">
+          <div class="connection-pill"><span class="status-dot" id="connectionDot"></span><span id="connectionText">Connecting</span></div>
+          <button class="button secondary" id="refreshButton">Refresh</button>
+          <button class="button primary" id="assistantButton">Start Assistant</button>
+        </div>
+      </header>
+
+      <section class="system-strip glass-panel" aria-label="System status">
+        <div><span>PROFILE</span><strong id="systemProfile">Learning</strong></div>
+        <div><span>BEST WINDOW</span><strong id="bestWindow">No data</strong></div>
+        <div><span>ACTIVITY MIX</span><strong id="systemMix">No data</strong></div>
+        <div><span>ASSISTANT</span><strong id="systemAssistant">Stopped</strong></div>
+      </section>
+
+      <section class="page active" id="command">
+        <div class="hero-grid">
+          <article class="focus-console glass-panel glow-edge">
+            <div class="panel-heading"><div><p class="eyebrow">FOCUS CORE &amp; ENFORCEMENT LAYER</p><h2 id="focusStateLabel">Ready for a session</h2></div><span class="live-tag" id="focusLiveTag">IDLE</span></div>
+            <div class="focus-orb-wrap">
+              <div class="focus-orb" id="focusOrb"><svg viewBox="0 0 220 220" aria-hidden="true"><circle class="orb-track" cx="110" cy="110" r="94"></circle><circle class="orb-progress" id="orbProgress" cx="110" cy="110" r="94"></circle></svg><div class="orb-core"><strong id="timerValue">50:00</strong><span id="timerPhase">READY</span></div></div>
+              <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+            </div>
+            <div class="focus-controls">
+              <select id="focusCardSelect" aria-label="Link focus session to a work card"><option value="">No linked card</option></select>
+              <div class="duration-pills" role="group" aria-label="Focus duration"><button class="duration-pill" data-minutes="25">25m</button><button class="duration-pill active" data-minutes="50">50m</button><button class="duration-pill" data-minutes="90">90m</button><button class="duration-pill" data-minutes="120">120m</button></div>
+              <div class="control-row"><button class="button primary wide" id="startFocusButton">Begin Focus</button><button class="icon-button" id="pauseFocusButton" title="Pause or resume" disabled>Ⅱ</button><button class="icon-button" id="nextFocusButton" title="Move to next phase" disabled>↦</button><button class="icon-button danger" id="stopFocusButton" title="Stop session" disabled>■</button></div>
+              <small class="shortcut-note">Ctrl+Enter starts focus · Ctrl+K jumps to board search</small>
+            </div>
+          </article>
+          <div class="metric-stack">
+            <article class="metric-card glass-panel"><span>THIS WEEK</span><strong id="weekFocus">0m</strong><small id="weekSessions">0 sessions</small><div class="metric-line"><i id="weekFocusLine"></i></div></article>
+            <article class="metric-card glass-panel"><span>PRODUCTIVITY</span><strong id="productivityScore">0</strong><small>30-day composite</small><div class="score-components" id="scoreComponents"></div></article>
+            <article class="metric-card glass-panel"><span>FOCUS STREAK</span><strong id="streakValue">0 days</strong><small id="streakDetail">Longest 0 days</small><div class="streak-flame" aria-hidden="true">♨</div></article>
+          </div>
+        </div>
+        <div class="dashboard-grid">
+          <article class="glass-panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">REAL-TIME SESSION INTELLIGENCE</p><h2>Focus rhythm</h2></div><span id="trendTotal">0 minutes</span></div><canvas id="trendChart" height="180" aria-label="Fourteen day focus trend chart"></canvas></article>
+          <article class="glass-panel plan-panel"><div class="panel-heading"><div><p class="eyebrow">SYSTEM CONFIGURATION · PERSISTENT PLANE</p><h2>Next recovery gates</h2></div><span id="profileCategory">general</span></div><div class="plan-list"><div class="plan-item"><span class="plan-icon">◒</span><div><strong>Hydration</strong><small>First body check</small></div><b id="hydrationPlan">60m</b></div><div class="plan-item"><span class="plan-icon">⌁</span><div><strong>Stretch</strong><small>Movement reset</small></div><b id="stretchPlan">120m</b></div><div class="plan-item"><span class="plan-icon">◐</span><div><strong>Meal</strong><small>Energy protection</small></div><b id="eatPlan">180m</b></div></div></article>
+        </div>
+        <article class="glass-panel insight-strip"><div><p class="eyebrow">SESSION INTELLIGENCE · DEEP WORK ASSISTANT</p><h2>What your work pattern is saying</h2></div><div id="insightText">Loading evidence from your session history…</div><button class="icon-button" id="nextInsightButton" title="Next insight">→</button></article>
+      </section>
+
+      <section class="page" id="board">
+        <div class="section-heading"><div><p class="eyebrow">WORK BOARD · DEEP WORK ASSISTANT</p><h2>Work Board</h2></div><button class="button primary" id="newCardButton">New Card</button></div>
+        <div class="board-toolbar glass-panel"><label class="search-field"><span>Search</span><input id="boardSearch" placeholder="Title, description, or tag"></label><label><span>Priority</span><select id="priorityFilter"><option value="all">All</option><option value="2">Urgent</option><option value="1">High</option><option value="0">Normal</option></select></label><label><span>Tag</span><select id="tagFilter"><option value="all">All tags</option></select></label><label class="check-field"><input type="checkbox" id="hideDoneToggle"><span>Hide done</span></label></div>
+        <div class="board-summary" id="boardSummary"></div><div class="kanban" id="kanbanBoard" aria-live="polite"></div>
+      </section>
+
+      <section class="page" id="sessions">
+        <div class="section-heading"><div><p class="eyebrow">SESSION DEEP DIVE · INTELLIGENCE LAYER</p><h2>Session Ledger</h2></div><div class="section-actions"><a class="button secondary" href="/api/export/sessions">Export Sessions</a><span class="data-path" id="historyPath"></span></div></div>
+        <div class="session-summary-row" id="sessionSummary"></div>
+        <div class="session-grid"><article class="glass-panel activity-mix-panel"><div class="panel-heading"><div><p class="eyebrow">ACTIVITY MIX</p><h2>Human vs agent</h2></div></div><div class="mix-ring" id="mixRing"><div><strong id="humanRatio">0%</strong><span>human</span></div></div><div class="mix-legend"><span><i class="human"></i>Human <b id="humanTime">0m</b></span><span><i class="agent"></i>Agent <b id="agentTime">0m</b></span></div></article><article class="glass-panel session-table-panel"><div class="panel-heading"><div><p class="eyebrow">RECENT RECORDS</p><h2>Completed sessions</h2></div><input id="sessionSearch" class="compact-search" placeholder="Filter applications"></div><div class="table-wrap"><table><thead><tr><th>When</th><th>Application</th><th>Duration</th><th>Ended</th><th>Reminders</th></tr></thead><tbody id="sessionRows"></tbody></table></div></article></div>
+      </section>
+
+      <section class="page" id="recovery">
+        <div class="section-heading"><div><p class="eyebrow">FOCUS CORE · RECOVERY LAYER</p><h2>Recovery Chamber</h2></div></div>
+        <div class="recovery-grid"><article class="breath-card glass-panel glow-edge"><div><p class="eyebrow">GUIDED RESET</p><h2>Box breathing</h2><p>Four equal phases: inhale, hold, exhale, hold.</p></div><div class="breath-visual" id="breathVisual"><span id="breathPhase">Ready</span><strong id="breathCount">4</strong></div><div class="duration-pills recovery-presets"><button class="duration-pill active" data-breath-minutes="2">2m</button><button class="duration-pill" data-breath-minutes="5">5m</button><button class="duration-pill" data-breath-minutes="10">10m</button></div><div class="control-row"><button class="button primary wide" id="breathButton">Start Reset</button><button class="button secondary" id="breathStopButton" disabled>Stop</button></div></article><article class="glass-panel recommendation-panel"><div class="panel-heading"><div><p class="eyebrow">PRODUCTIVITY COMPONENTS</p><h2>Where to strengthen</h2></div></div><div id="recommendations" class="recommendations"></div></article><article class="glass-panel category-panel"><div class="panel-heading"><div><p class="eyebrow">30-DAY WORK MIX</p><h2>Category distribution</h2></div></div><div id="categoryBars" class="category-bars"></div></article></div>
+      </section>
+
+      <section class="page" id="settings">
+        <div class="section-heading"><div><p class="eyebrow">ASSISTANT OPERATIONS · SYSTEM CONFIGURATION</p><h2>Settings & Diagnostics</h2></div><button class="button primary" id="saveSettingsButton">Save Settings</button></div>
+        <div class="settings-grid">
+          <form class="glass-panel settings-panel" id="settingsForm"><div class="panel-heading"><div><p class="eyebrow">ASSISTANT BEHAVIOUR</p><h2>Launch profile</h2></div></div><div class="form-grid"><label>Default focus minutes<input type="number" id="settingFocus" min="5" max="240"></label><label>Refresh every seconds<input type="number" id="settingRefresh" min="5" max="300"></label></div><div class="form-grid"><label>Short break<input type="number" id="settingShortBreak" min="1" max="60"></label><label>Long break<input type="number" id="settingLongBreak" min="1" max="120"></label></div><div class="form-grid"><label>Poll interval seconds<input type="number" id="settingPoll" min="1" max="300" step="0.5"></label><label>Response window minutes<input type="number" id="settingResponse" min="1" max="180"></label></div><label>Obsidian vault path<input id="settingObsidian" placeholder="C:\Users\you\Documents\Obsidian Vault"></label><div class="toggle-grid"><label class="switch-row"><input type="checkbox" id="settingVoice"><span>Voice reminders</span></label><label class="switch-row"><input type="checkbox" id="settingPreannounce"><span>Voice before popup</span></label><label class="switch-row"><input type="checkbox" id="settingAutoStart"><span>Start assistant with UI</span></label><label class="switch-row"><input type="checkbox" id="settingReducedMotion"><span>Reduced motion</span></label></div></form>
+          <article class="glass-panel diagnostics-panel"><div class="panel-heading"><div><p class="eyebrow">SYSTEM READINESS</p><h2>Diagnostics</h2></div><button class="button secondary" id="refreshDiagnosticsButton">Run Check</button></div><div id="diagnosticsGrid" class="diagnostics-grid"></div></article>
+          <article class="glass-panel logs-panel"><div class="panel-heading"><div><p class="eyebrow">ASSISTANT OUTPUT</p><h2>Live process log</h2></div><button class="button secondary" id="refreshLogsButton">Refresh Log</button></div><pre id="assistantLog">No UI-managed assistant output yet.</pre></article>
+          <article class="glass-panel export-panel"><div><p class="eyebrow">LOCAL DATA PORTABILITY</p><h2>Exports</h2><p>Download exact JSON snapshots from the same local stores used by the CLI.</p></div><div class="control-row"><a class="button secondary" href="/api/export/cards">Export Cards</a><a class="button secondary" href="/api/export/sessions">Export Sessions</a></div></article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="cardDialog"><form method="dialog" id="cardForm"><div class="dialog-heading"><div><p class="eyebrow">WORK ITEM</p><h2 id="cardDialogTitle">New card</h2></div><button class="icon-button" value="cancel" aria-label="Close">×</button></div><input type="hidden" id="cardId"><label>Title<input id="cardTitle" required maxlength="140"></label><label>Description<textarea id="cardDescription" rows="4" maxlength="1200"></textarea></label><div class="form-grid"><label>Column<select id="cardColumn"><option value="backlog">Backlog</option><option value="ready">Ready</option><option value="in_progress">In Progress</option><option value="review">Review</option><option value="done">Done</option></select></label><label>Priority<select id="cardPriority"><option value="0">Normal</option><option value="1">High</option><option value="2">Urgent</option></select></label></div><label>Tags<input id="cardTags" placeholder="research, client, backend"></label><div class="form-grid"><label>Linked app pattern<input id="cardApp" placeholder="code.exe"></label><label>Window title pattern<input id="cardWindow" placeholder="deep-work-assistant"></label></div><label>Log additional minutes<input id="cardLogMinutes" type="number" min="0" max="1440" value="0"></label><div class="dialog-actions"><button type="button" class="button danger ghost" id="deleteCardButton" hidden>Delete</button><span></span><button value="cancel" class="button secondary">Cancel</button><button type="submit" class="button primary">Save Card</button></div></form></dialog>
+  <dialog id="sessionDialog"><div class="dialog-heading"><div><p class="eyebrow">SESSION RECORD</p><h2 id="sessionDialogTitle">Session details</h2></div><button class="icon-button" id="closeSessionDialog" aria-label="Close">×</button></div><div id="sessionDetail" class="session-detail"></div></dialog>
+  <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+  <script src="/app.v2.js"></script>
+</body>
+</html>
