@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -32,6 +33,40 @@ def _utc_iso(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _sanitize_vision_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    """Keep only finite scalar metrics; nested frame-like data is discarded."""
+    def finite_number(value: Any, minimum: float, maximum: float) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numeric = float(value)
+        if not math.isfinite(numeric) or not minimum <= numeric <= maximum:
+            return None
+        return numeric
+
+    posture_raw = observation.get('posture')
+    posture = None
+    if isinstance(posture_raw, dict):
+        visible = posture_raw.get('visible')
+        posture = {
+            'fwd_head_deg': finite_number(posture_raw.get('fwd_head_deg'), 0.0, 180.0),
+            'shoulder_tilt_deg': finite_number(posture_raw.get('shoulder_tilt_deg'), -90.0, 90.0),
+            'nose_y_frac': finite_number(posture_raw.get('nose_y_frac'), 0.0, 1.0),
+            'visible': visible if isinstance(visible, bool) else False,
+        }
+
+    captured_at = observation.get('captured_at')
+    activity = observation.get('activity')
+    error = observation.get('error')
+    return {
+        'captured_at': captured_at if isinstance(captured_at, str) else None,
+        'activity': activity if isinstance(activity, str) else 'unavailable',
+        'motion': finite_number(observation.get('motion'), 0.0, 255.0),
+        'posture': posture,
+        'posture_alert': observation.get('posture_alert') is True,
+        'error': error[:500] if isinstance(error, str) else None,
+    }
 
 
 def _parse_dt(value: str) -> datetime:
@@ -443,6 +478,7 @@ class DeepWorkAssistant:
         self.session_id_factory = session_id_factory or (lambda: f'dwa-{uuid4().hex[:8]}')
 
         self.current_session: ActiveSession | None = None
+        self.latest_vision_observation: dict[str, Any] | None = None
         self._previous_sample: ActivitySample | None = None
         self._start_streak = 0
 
@@ -515,6 +551,14 @@ class DeepWorkAssistant:
                                 'laptop_use_profile': self.laptop_use_profile.to_record(),
                                 'streak_days': self.focus_streak.current_streak,
                                 'category': self.laptop_use_profile.dominant_category,
+                                'vision_activity': (
+                                    self.latest_vision_observation.get('activity')
+                                    if self.latest_vision_observation else None
+                                ),
+                                'vision_posture': (
+                                    self.latest_vision_observation.get('posture')
+                                    if self.latest_vision_observation else None
+                                ),
                             },
                         )
                     )
@@ -524,6 +568,30 @@ class DeepWorkAssistant:
                 events.append(EngineEvent('session_ended', {'summary': summary.to_record(), 'focus_streak': self.focus_streak.to_record()}))
 
         self._previous_sample = sample
+        return events
+
+    def record_vision_observation(self, observation: dict[str, Any]) -> list[EngineEvent]:
+        """Feed a local-only vision metric record into the health engine.
+
+        Raw frames never reach the engine.  It retains only the latest
+        classification/posture metrics so reminder events can be enriched.
+        """
+        safe_observation = _sanitize_vision_observation(observation)
+        self.latest_vision_observation = safe_observation
+        events = [EngineEvent('vision_sample', {'observation': dict(safe_observation)})]
+        if safe_observation.get('posture_alert'):
+            posture = safe_observation.get('posture') or {}
+            events.append(
+                EngineEvent(
+                    'posture_alert',
+                    {
+                        'title': 'Posture reset',
+                        'message': 'Your posture has been forward for several checks. Sit back, lower your shoulders, and reset your neck.',
+                        'category': 'health',
+                        'fwd_head_deg': posture.get('fwd_head_deg'),
+                    },
+                )
+            )
         return events
 
     def record_reminder_response(self, stage: str, response: str) -> bool:
@@ -560,6 +628,7 @@ class DeepWorkAssistant:
             self._start_streak = 1
 
     def _start_session(self, sample: ActivitySample) -> ActiveSession:
+        self.latest_vision_observation = None
         session = ActiveSession(
             session_id=self.session_id_factory(),
             started_at=sample.captured_at,
@@ -626,6 +695,7 @@ class DeepWorkAssistant:
         )
 
         self.current_session = None
+        self.latest_vision_observation = None
         self._start_streak = 0
         return summary
 

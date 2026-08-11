@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from .engine import (
     advance_streak,
     analyze_laptop_use,
     build_adaptive_plan,
+    classify_sample,
     format_plan,
     load_streak,
     save_streak,
@@ -43,6 +45,24 @@ def _positive_int(name: str, value: int) -> int:
     return value
 
 
+def _vision_sample_interval(value: str) -> float:
+    interval = float(value)
+    if not math.isfinite(interval) or not 30.0 <= interval <= 60.0:
+        raise argparse.ArgumentTypeError(
+            'vision sample interval must be between 30 and 60 seconds'
+        )
+    return interval
+
+
+def _vision_frame_interval(value: str) -> float:
+    interval = float(value)
+    if not math.isfinite(interval) or not 0.1 <= interval <= 5.0:
+        raise argparse.ArgumentTypeError(
+            'vision frame interval must be between 0.1 and 5 seconds'
+        )
+    return interval
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='deep-work-assistant',
@@ -62,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('--obsidian-vault', type=Path)
     run.add_argument('--voice', action='store_true', help='Enable voice TTS reminders (requires edge-tts)')
     run.add_argument('--voice-pre-announce', action='store_true', help='Voice precedes the desktop popup (default: after)')
+    run.add_argument('--vision', action='store_true', help='Opt in to local camera posture/activity probes')
+    run.add_argument('--vision-sample-interval', type=_vision_sample_interval, default=60.0,
+                     help='Seconds between camera probes while human-active (default: 60)')
+    run.add_argument('--vision-frame-interval', type=_vision_frame_interval, default=0.4,
+                     help='Seconds between in-memory motion frames (default: 0.4)')
 
     plan = sub.add_parser('plan', help='Print the current adaptive reminder plan')
     plan.add_argument('--history', type=Path, default=HistoryStore.default().path)
@@ -76,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     vc = vision_sub.add_parser('check', help='One-shot posture + motion check')
     vc.add_argument('--interval', type=float, default=2.0, help='Seconds between motion frames')
     vc.set_defaults(vision_func=_vision_check)
+    vp = vision_sub.add_parser(
+        'provision',
+        help='Explicitly download and checksum-verify the local pose model',
+    )
+    vp.set_defaults(vision_func=_vision_provision)
 
     # ── Kanban board ──
     sub.add_parser('board', help='Show the Kanban board')
@@ -187,7 +217,7 @@ def _vision_status(args) -> int:
     ok, reason = v.camera_available()
     model = v.model_cache_dir() / v.POSE_MODEL_FILENAME
     print(f"camera path : {'ready' if ok else reason}")
-    print(f"pose model  : {'present' if model.exists() else 'missing (downloads on first check)'}")
+    print(f"pose model  : {'present' if model.exists() else 'missing (run: vision provision)'}")
     print(f"model cache : {v.model_cache_dir()}")
     return 0 if ok else 1
 
@@ -211,6 +241,25 @@ def _vision_check(args) -> int:
     return 0
 
 
+def _vision_provision(args) -> int:
+    """Explicit network step: download and verify the pinned pose model."""
+    from . import vision as v
+
+    model = v.model_cache_dir() / v.POSE_MODEL_FILENAME
+    print(f"provisioning pose model from: {v.POSE_MODEL_URL}")
+    try:
+        v.ensure_model(
+            model,
+            url=v.POSE_MODEL_URL,
+            expected_sha256=v.POSE_MODEL_SHA256,
+        )
+    except Exception as exc:
+        print(f"model provisioning failed: {exc}")
+        return 1
+    print(f"pose model verified: {model}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -223,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == 'vision':
         if not getattr(args, 'vision_command', None):
-            print('error: vision requires a subcommand (status | check)')
+            print('error: vision requires a subcommand (status | check | provision)')
             return 1
         return args.vision_func(args)
 
@@ -297,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
         obsidian_vault=args.obsidian_vault,
         voice_enabled=args.voice,
         voice_pre_announce=args.voice_pre_announce,
+        vision_enabled=args.vision,
+        vision_sample_interval=args.vision_sample_interval,
+        vision_frame_interval=args.vision_frame_interval,
     )
 
 
@@ -760,6 +812,9 @@ def run_live_loop(
     obsidian_vault: Path | None,
     voice_enabled: bool = False,
     voice_pre_announce: bool = False,
+    vision_enabled: bool = False,
+    vision_sample_interval: float = 60.0,
+    vision_frame_interval: float = 0.4,
 ) -> int:
     desktop_notifier = DesktopNotifier(dry_run=dry_run)
     voice_notifier = VoiceNotifier(enabled=voice_enabled, dry_run=dry_run)
@@ -784,6 +839,25 @@ def run_live_loop(
         response_window_minutes=response_window,
     )
 
+    vision_sampler = None
+    if vision_enabled:
+        from .vision import camera_available
+        from .vision_runtime import BackgroundVisionSampler, VisionSampler
+
+        vision_sampler = BackgroundVisionSampler(
+            VisionSampler(
+                sample_interval_seconds=vision_sample_interval,
+                frame_interval_seconds=vision_frame_interval,
+            )
+        )
+        vision_ready, vision_reason = camera_available()
+        status = 'ready' if vision_ready else f'degraded: {vision_reason}'
+        print(
+            '[deep-work-assistant] vision enabled: '
+            f'every {max(1.0, float(vision_sample_interval)):g}s during human-active sessions; '
+            f'local-only, frames discarded ({status})'
+        )
+
     print(f'[deep-work-assistant] starting with {format_plan(plan)}')
     print(f'[deep-work-assistant] history file: {history.path}')
     print(f'[deep-work-assistant] focus streak: {focus_streak.current_streak} days (voice={"on" if voice_enabled else "off"})')
@@ -791,9 +865,21 @@ def run_live_loop(
 
     try:
         response_watcher = ReminderResponseWatcher()
+        previous_sample: ActivitySample | None = None
         while True:
             sample = probe.sample()
             events = assistant.process_sample(sample)
+
+            if vision_sampler is not None:
+                events.extend(
+                    _collect_vision_events(
+                        assistant=assistant,
+                        sampler=vision_sampler,
+                        previous_sample=previous_sample,
+                        sample=sample,
+                    )
+                )
+            previous_sample = sample
 
             _handle_events(events, notifier, history, assistant, obsidian_vault, board, active_card_id)
 
@@ -820,6 +906,75 @@ def run_live_loop(
             print(f'[deep-work-assistant] focus streak: {assistant.focus_streak.current_streak} days')
         print('[deep-work-assistant] stopped')
         return 0
+    finally:
+        if vision_sampler is not None:
+            vision_sampler.close()
+
+
+def _collect_vision_events(
+    *,
+    assistant: DeepWorkAssistant,
+    sampler,
+    previous_sample: ActivitySample | None,
+    sample: ActivitySample,
+) -> list[EngineEvent]:
+    """Poll one non-blocking, privacy-gated camera probe into the engine."""
+    activity_state = classify_sample(previous_sample, sample)
+    session_id = (
+        assistant.current_session.session_id
+        if assistant.current_session is not None
+        else None
+    )
+    observation = sampler.poll(
+        sample.captured_at,
+        activity_state=activity_state,
+        session_id=session_id,
+    )
+    if observation is None:
+        return []
+    return assistant.record_vision_observation(observation.to_record())
+
+
+def _append_vision_event(observation: dict[str, Any], *, path: Path | None = None) -> Path:
+    """Append metrics-only vision evidence; raw frames are never accepted."""
+    import json
+
+    target = path or (Path.home() / '.deep_work_assistant' / 'vision_events.jsonl')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    def finite_number(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+
+    captured_at = observation.get('captured_at')
+    activity = observation.get('activity')
+    error = observation.get('error')
+    record = {
+        'captured_at': captured_at if isinstance(captured_at, str) else None,
+        'activity': activity if isinstance(activity, str) else 'unavailable',
+        'motion': finite_number(observation.get('motion')),
+        'posture_alert': (
+            observation.get('posture_alert')
+            if isinstance(observation.get('posture_alert'), bool)
+            else False
+        ),
+        'error': error[:500] if isinstance(error, str) else None,
+    }
+    posture = observation.get('posture')
+    if isinstance(posture, dict):
+        visible = posture.get('visible')
+        record['posture'] = {
+            'fwd_head_deg': finite_number(posture.get('fwd_head_deg')),
+            'shoulder_tilt_deg': finite_number(posture.get('shoulder_tilt_deg')),
+            'nose_y_frac': finite_number(posture.get('nose_y_frac')),
+            'visible': visible if isinstance(visible, bool) else False,
+        }
+    else:
+        record['posture'] = None
+    with target.open('a', encoding='utf-8') as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+    return target
 
 
 def simulate_scenario() -> int:
@@ -869,7 +1024,22 @@ def _handle_events(
     active_card_id: str | None = None,
 ) -> None:
     for event in events:
-        if event.kind == 'session_started':
+        if event.kind == 'vision_sample':
+            observation = event.data.get('observation') or {}
+            try:
+                _append_vision_event(observation)
+            except Exception as exc:
+                print(f'[deep-work-assistant] vision metrics log skipped: {exc}')
+        elif event.kind == 'posture_alert':
+            notifier.notify_reminder(
+                'posture',
+                event.data.get('title', 'Posture reset'),
+                event.data.get('message', 'Sit back and reset your posture.'),
+                event.data.get('category', 'health'),
+            )
+            angle = event.data.get('fwd_head_deg')
+            print(f'[deep-work-assistant] sustained posture alert: forward-head={angle}°')
+        elif event.kind == 'session_started':
             message = event.data.get('message', f"session started ({event.data['primary_app']})")
             print(f"[deep-work-assistant] session started ({event.data['primary_app']})")
             # Speak the motivational session-start message

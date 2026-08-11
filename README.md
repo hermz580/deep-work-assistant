@@ -15,6 +15,46 @@ A local Windows assistant that detects focused work from active-window stability
 - 🎯 Personalizes stretch/hydration wording when your pattern shows coding, writing/admin, research, communication, or creative work
 - 📝 Logs completed sessions locally in JSONL
 - 🔄 Adjusts future intervals based on recent session behavior
+- 👁️ **Optional local vision** — brief posture/activity probes only during
+  human-active focus sessions; raw frames are discarded and never uploaded
+
+## Vision Phase 2 — human-active posture and activity sensing
+
+Vision is explicit opt-in. Install the optional local dependencies, then start
+the loop with `--vision`:
+
+```bash
+pip install "deep-work-assistant[vision]"
+python -m deep_work_assistant vision provision  # one explicit, checksum-verified model download
+python -m deep_work_assistant run --vision
+```
+
+The live loop never downloads anything or sends camera data over the network.
+The only network step is the explicit `vision provision` command above; it
+pins and verifies the model's SHA-256 before installation.
+
+The runtime is deliberately privacy-gated:
+
+- probe cadence is constrained to **30–60 seconds** (default: 60 seconds);
+- frame-to-frame motion comparison is constrained to **0.1–5 seconds**
+  (default: 0.4 seconds);
+- probes run only while a DWA session is active and physical keyboard/mouse
+  input says the human is active (never during agent-active or idle time);
+- the webcam opens for a few in-memory frames and releases immediately;
+- frames are discarded; only activity/posture metrics are appended to
+  `~/.deep_work_assistant/vision_events.jsonl`;
+- posture alerts require sustained bad posture (3 of the last 5 checks), not a
+  single noisy frame;
+- camera/dependency failure degrades to an `unavailable` metric instead of
+  crashing the assistant.
+
+Cadence can be tuned while keeping explicit opt-in:
+
+```bash
+python -m deep_work_assistant run --vision \
+  --vision-sample-interval 60 \
+  --vision-frame-interval 0.4
+```
 
 ## New in v0.2.0
 

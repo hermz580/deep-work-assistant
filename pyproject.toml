@@ -18,6 +18,10 @@ dev = ["pytest>=7.0"]
 deep-work-assistant = "deep_work_assistant.cli:main"
 deep-work-ui = "deep_work_assistant.web_ui_v2:main"
 
+[tool.setuptools.packages.find]
+include = ["deep_work_assistant*"]
+exclude = ["startup*", "tests*"]
+
 [tool.setuptools.package-data]
 deep_work_assistant = ["ui/*.html", "ui/*.css", "ui/*.js"]
 

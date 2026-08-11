@@ -19,6 +19,10 @@ Spec (Given/When/Then):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
+import types
+
+import pytest
 
 from deep_work_assistant.vision import (
     L_EAR,
@@ -84,6 +88,13 @@ def test_hunched_posture_exceeds_25_degrees() -> None:
 
 def test_level_shoulders_report_near_zero_tilt() -> None:
     m = posture_metrics(_upright())
+    assert abs(m["shoulder_tilt_deg"]) < 5
+
+
+def test_mirrored_level_shoulders_normalize_near_zero_tilt() -> None:
+    lms = _upright()
+    lms[L_SHOULDER].x, lms[R_SHOULDER].x = lms[R_SHOULDER].x, lms[L_SHOULDER].x
+    m = posture_metrics(lms)
     assert abs(m["shoulder_tilt_deg"]) < 5
 
 
@@ -209,3 +220,167 @@ def test_ensure_model_skips_when_present(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not download")))
     ensure_model(model_path, url="https://example.test/pose.task")
     assert model_path.read_bytes() == b"E" * 2000
+
+
+def test_repeated_runtime_check_closes_pose_landmarker(tmp_path, monkeypatch) -> None:
+    """Phase 2 repeats checks for hours; every native landmarker must close."""
+    from deep_work_assistant import vision as module
+
+    closed = {"value": False}
+
+    class FakeLandmarker:
+        def detect(self, image):
+            return types.SimpleNamespace(pose_landmarks=[])
+
+        def close(self):
+            closed["value"] = True
+
+    class FakePoseLandmarker:
+        @staticmethod
+        def create_from_options(options):
+            return FakeLandmarker()
+
+    fake_cv2 = types.ModuleType("cv2")
+    fake_cv2.COLOR_BGR2RGB = 1
+    fake_cv2.cvtColor = lambda frame, code: frame
+
+    fake_mp = types.ModuleType("mediapipe")
+    fake_mp.ImageFormat = types.SimpleNamespace(SRGB=1)
+    fake_mp.Image = lambda **kwargs: object()
+
+    fake_mp_python = types.ModuleType("mediapipe.tasks.python")
+    fake_mp_python.BaseOptions = lambda **kwargs: object()
+    fake_mp_vision = types.ModuleType("mediapipe.tasks.python.vision")
+    fake_mp_vision.RunningMode = types.SimpleNamespace(IMAGE=1)
+    fake_mp_vision.PoseLandmarkerOptions = lambda **kwargs: object()
+    fake_mp_vision.PoseLandmarker = FakePoseLandmarker
+    fake_mp_python.vision = fake_mp_vision
+    fake_tasks = types.ModuleType("mediapipe.tasks")
+    fake_tasks.python = fake_mp_python
+    fake_mp.tasks = fake_tasks
+
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    monkeypatch.setitem(sys.modules, "mediapipe", fake_mp)
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks", fake_tasks)
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks.python", fake_mp_python)
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks.python.vision", fake_mp_vision)
+    monkeypatch.setattr(module, "camera_available", lambda: (True, ""))
+    monkeypatch.setattr(module, "model_cache_dir", lambda: tmp_path)
+    (tmp_path / module.POSE_MODEL_FILENAME).write_bytes(b"M" * 2000)
+    monkeypatch.setattr(module, "_file_sha256", lambda path: module.POSE_MODEL_SHA256)
+    monkeypatch.setattr(module, "probe_motion", lambda cam_index, interval, **kwargs: (True, 2.0))
+    monkeypatch.setattr(module, "grab_frame", lambda cam_index: object())
+
+    result = module.run_check(interval=0.0)
+
+    assert result["available"] is True
+    assert closed["value"] is True
+
+
+def test_runtime_check_never_downloads_a_missing_model(tmp_path, monkeypatch) -> None:
+    """Live sampling is offline-only; provisioning requires a separate command."""
+    from deep_work_assistant import vision as module
+
+    monkeypatch.setattr(module, "camera_available", lambda: (True, ""))
+    monkeypatch.setattr(module, "model_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        module,
+        "ensure_model",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network path must not run")),
+    )
+
+    result = module.run_check(interval=0.0)
+
+    assert result["available"] is False
+    assert "model" in result["error"].lower()
+    assert "provision" in result["error"].lower()
+
+
+def test_runtime_rejects_a_pose_model_with_wrong_checksum(tmp_path, monkeypatch) -> None:
+    from deep_work_assistant import vision as module
+
+    model = tmp_path / module.POSE_MODEL_FILENAME
+    model.write_bytes(b"tampered" * 400)
+    monkeypatch.setattr(module, "camera_available", lambda: (True, ""))
+    monkeypatch.setattr(module, "model_cache_dir", lambda: tmp_path)
+
+    result = module.run_check(interval=0.0)
+
+    assert result["available"] is False
+    assert "checksum" in result["error"].lower()
+
+
+def test_model_provisioning_rejects_wrong_checksum(tmp_path, monkeypatch) -> None:
+    from deep_work_assistant.vision import ensure_model
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b"not-the-pinned-model" * 100
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: Response())
+    model = tmp_path / "pose.task"
+
+    with pytest.raises(ValueError, match="checksum"):
+        ensure_model(
+            model,
+            url="https://example.test/pose.task",
+            expected_sha256="0" * 64,
+        )
+
+    assert not model.exists()
+
+
+def test_grab_frame_releases_camera_when_open_fails(monkeypatch) -> None:
+    from deep_work_assistant import vision as module
+
+    class Capture:
+        released = False
+
+        def isOpened(self):
+            return False
+
+        def release(self):
+            self.released = True
+
+    capture = Capture()
+    fake_cv2 = types.SimpleNamespace(
+        CAP_DSHOW=1,
+        VideoCapture=lambda *args: capture,
+    )
+    monkeypatch.setattr(module, "_load_cv2", lambda: fake_cv2)
+
+    assert module.grab_frame() is None
+    assert capture.released is True
+
+
+def test_grab_frame_releases_camera_when_read_raises(monkeypatch) -> None:
+    from deep_work_assistant import vision as module
+
+    class Capture:
+        released = False
+
+        def isOpened(self):
+            return True
+
+        def read(self):
+            raise RuntimeError("camera read failed")
+
+        def release(self):
+            self.released = True
+
+    capture = Capture()
+    fake_cv2 = types.SimpleNamespace(
+        CAP_DSHOW=1,
+        VideoCapture=lambda *args: capture,
+    )
+    monkeypatch.setattr(module, "_load_cv2", lambda: fake_cv2)
+
+    with pytest.raises(RuntimeError, match="camera read failed"):
+        module.grab_frame()
+    assert capture.released is True
