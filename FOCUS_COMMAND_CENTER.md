@@ -4,11 +4,13 @@ The Advanced Work Board is a local browser interface for the existing Deep Work 
 
 ## Start it on Windows
 
-From the repository folder, double-click:
+For the silent daily launch, double-click:
 
 ```text
-run_focus_command_center.bat
+Launch Deep Work Assistant.vbs
 ```
+
+Use `run_focus_command_center.bat` only when you want a visible troubleshooting console.
 
 Or install and run:
 
@@ -29,7 +31,7 @@ The interface opens at `http://127.0.0.1:8791`. The server binds to localhost by
 - Pause, resume, advance, or stop the timer.
 - Start or stop a Deep Work Assistant process using saved launch settings.
 - Inspect the adaptive hydration, stretch, and meal schedule.
-- Read the actual productivity score, streak, local profile, insights, and 14-day focus trend.
+- Read the productivity score, effective streak, evidence level, insights, and 14-day focus trend.
 - Use `Ctrl+Enter` to start focus and `Ctrl+K` to jump to board search.
 
 ### Work Board
@@ -66,6 +68,7 @@ Settings are stored in `~/.deep_work_assistant/ui_settings.json`.
 - Check Python, Windows capture readiness, optional voice support, data paths, and local record counts.
 - Read the output log for the assistant instance launched by the UI.
 - Export cards and sessions as exact JSON snapshots.
+- Reopen the How It Works tutorial and prepare a local support note from Questions, comments & concerns.
 
 ## Visual systems
 
@@ -89,7 +92,9 @@ The ambient canvas responds to the selected visual system. Reduced-motion mode l
 ## Current boundaries
 
 - The assistant status control knows about the process it launched. It cannot reliably identify a separate assistant process started in another terminal.
+- Start Assistant and Begin Focus are separate workflows until the State Truth milestone joins them through one runtime coordinator.
 - The interface is a localhost browser application, not a native Windows executable.
 - Existing reminder windows and the enforced stretch overlay remain separate Windows UI processes.
 - The existing stretch overlay still covers only the primary monitor.
 - Windows foreground activity, notifications, and text-to-speech still require verification on Windows hardware.
+- Optional posture sensing uses a generic uncalibrated threshold; it does not yet learn a personal posture baseline.

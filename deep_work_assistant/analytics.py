@@ -16,7 +16,14 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
-from .engine import SessionSummary, _categorize_app, load_streak
+from .engine import (
+    ADHERED_REMINDER_OUTCOMES,
+    RESISTED_REMINDER_OUTCOMES,
+    SessionSummary,
+    _categorize_app,
+    effective_streak,
+    load_streak,
+)
 from .history import HistoryStore
 from .pomodoro import load_history
 
@@ -277,9 +284,9 @@ class AnalyticsEngine:
             for ro in s.reminder_outcomes:
                 outcome = str(ro.get('outcome', '')).lower()
                 stage = str(ro.get('stage', '')).lower()
-                if stage in BREAK_REMINDER_STAGES and outcome != 'not_sent':
+                if stage in BREAK_REMINDER_STAGES and outcome in (ADHERED_REMINDER_OUTCOMES | RESISTED_REMINDER_OUTCOMES):
                     break_reminder_count += 1
-                    if outcome == 'break':
+                    if outcome in ADHERED_REMINDER_OUTCOMES:
                         break_taken_count += 1
         break_effectiveness = (
             round(break_taken_count / break_reminder_count, 2)
@@ -288,7 +295,7 @@ class AnalyticsEngine:
         )
 
         # Streak
-        streak = load_streak()
+        streak = effective_streak(load_streak())
         current_streak = streak.current_streak
         longest_streak = streak.longest_streak
 
@@ -367,9 +374,9 @@ class AnalyticsEngine:
             for ro in s.reminder_outcomes:
                 outcome = str(ro.get('outcome', '')).lower()
                 stage = str(ro.get('stage', '')).lower()
-                if stage in BREAK_REMINDER_STAGES and outcome != 'not_sent':
+                if stage in BREAK_REMINDER_STAGES and outcome in (ADHERED_REMINDER_OUTCOMES | RESISTED_REMINDER_OUTCOMES):
                     total_reminders += 1
-                    if outcome == 'break':
+                    if outcome in ADHERED_REMINDER_OUTCOMES:
                         total_breaks_taken += 1
         break_adherence_score = (
             round((total_breaks_taken / total_reminders) * 100, 1)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deep-work-assistant"
-version = "0.1.0"
+version = "0.5.0"
 description = "Adaptive deep work reminders for Windows"
 requires-python = ">=3.11"
 dependencies = ["psutil>=5.9"]
@@ -12,11 +12,15 @@ dependencies = ["psutil>=5.9"]
 [project.optional-dependencies]
 voice = ["edge-tts>=6.0"]
 vision = ["mediapipe>=1.0", "opencv-python>=4.8"]
-dev = ["pytest>=7.0"]
+dev = ["build>=1.0", "pytest>=7.0"]
 
 [project.scripts]
 deep-work-assistant = "deep_work_assistant.cli:main"
 deep-work-ui = "deep_work_assistant.web_ui_v2:main"
+
+[tool.setuptools.packages.find]
+include = ["deep_work_assistant*"]
+exclude = ["startup*", "tests*"]
 
 [tool.setuptools.package-data]
 deep_work_assistant = ["ui/*.html", "ui/*.css", "ui/*.js"]

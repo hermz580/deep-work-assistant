@@ -23,7 +23,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .analytics import AnalyticsEngine
-from .engine import analyze_laptop_use, build_adaptive_plan, load_streak
+from .engine import analyze_laptop_use, build_adaptive_plan, effective_streak, load_streak
 from .history import HistoryStore
 from .kanban import COLUMNS, Card, KanbanBoard
 from .pomodoro import PomodoroConfig, PomodoroTimer
@@ -255,7 +255,7 @@ class CommandCenterHandler(BaseHTTPRequestHandler):
             board.close()
         plan = build_adaptive_plan(recent)
         profile = analyze_laptop_use(recent)
-        streak = load_streak()
+        streak = effective_streak(load_streak())
         human_seconds = sum(int(getattr(s, "human_active_seconds", 0) or 0) for s in recent)
         agent_seconds = sum(int(getattr(s, "agent_active_seconds", 0) or 0) for s in recent)
         total_activity = human_seconds + agent_seconds

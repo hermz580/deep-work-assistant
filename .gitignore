@@ -16,4 +16,5 @@ dist/
 # Personal / generated — not for public repos
 startup/
 *.vbs
+!Launch Deep Work Assistant.vbs
 local_config.bat

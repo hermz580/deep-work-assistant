@@ -6,10 +6,9 @@ and richer dashboard data over the dependency-free server in ``web_ui``.
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import errno
 import json
 import os
-import platform
 import signal
 import subprocess
 import sys
@@ -21,7 +20,9 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
+from .diagnostics import collect_diagnostics
 from .history import HistoryStore
 from .kanban import KanbanBoard
 from .web_ui import (
@@ -34,7 +35,6 @@ from .web_ui import (
 
 SETTINGS_PATH = Path.home() / ".deep_work_assistant" / "ui_settings.json"
 ASSISTANT_LOG_PATH = Path.home() / ".deep_work_assistant" / "assistant-ui.log"
-
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "cinematic",
     "motion": "full",
@@ -54,6 +54,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "response_window": 10,
     "auto_start_assistant": False,
     "hide_done_cards": False,
+    "tutorial_seen_version": 0,
+    "tutorial_completed_version": 0,
 }
 
 
@@ -107,6 +109,8 @@ class SettingsStore:
         clean["response_window"] = _clamp_int(value.get("response_window"), 1, 180, 10)
         clean["auto_start_assistant"] = bool(value.get("auto_start_assistant"))
         clean["hide_done_cards"] = bool(value.get("hide_done_cards"))
+        clean["tutorial_seen_version"] = _clamp_int(value.get("tutorial_seen_version"), 0, 100, 0)
+        clean["tutorial_completed_version"] = _clamp_int(value.get("tutorial_completed_version"), 0, 100, 0)
         return clean
 
 
@@ -318,35 +322,11 @@ class EnhancedHandler(CommandCenterHandler):
         super()._serve_static(request_path)
 
     def _diagnostics_payload(self) -> dict[str, Any]:
-        history = HistoryStore.default()
-        board_path = Path.home() / ".deep_work_assistant" / "kanban.db"
-        paths = {
-            "history": _path_status(history.path),
-            "kanban": _path_status(board_path),
-            "pomodoro": _path_status(ACTIVE_POMO_PATH),
-            "settings": _path_status(self.enhanced_state.settings_store.path),
-            "assistant_log": _path_status(self.enhanced_state.log_path),
-        }
-        board = KanbanBoard()
-        try:
-            card_count = board.total_cards()
-        finally:
-            board.close()
-        session_count = len(self._all_sessions())
-        windows_native = platform.system().lower() == "windows"
-        psutil_ready = importlib.util.find_spec("psutil") is not None
-        edge_tts_ready = importlib.util.find_spec("edge_tts") is not None
-        return {
-            "status": "ready" if windows_native and psutil_ready else "limited",
-            "platform": platform.platform(),
-            "python": sys.version.split()[0],
-            "windows_activity_capture": windows_native and psutil_ready,
-            "voice_available": edge_tts_ready,
-            "dependencies": {"psutil": psutil_ready, "edge_tts": edge_tts_ready},
-            "paths": paths,
-            "counts": {"sessions": session_count, "cards": card_count},
-            "assistant": self.enhanced_state.assistant_status(),
-        }
+        return collect_diagnostics(
+            settings_path=self.enhanced_state.settings_store.path,
+            assistant_log_path=self.enhanced_state.log_path,
+            assistant=self.enhanced_state.assistant_status(),
+        )
 
     @staticmethod
     def _all_sessions() -> list[dict[str, Any]]:
@@ -387,17 +367,6 @@ class EnhancedServer(ThreadingHTTPServer):
         self.app_state = state
 
 
-def _path_status(path: Path) -> dict[str, Any]:
-    parent = path.parent
-    exists = path.exists()
-    writable = os.access(path if exists else parent, os.W_OK)
-    try:
-        size = path.stat().st_size if exists else 0
-    except OSError:
-        size = 0
-    return {"path": str(path), "exists": exists, "writable": writable, "size_bytes": size}
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Deep Work Assistant Focus Command Center")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address; localhost by default")
@@ -410,8 +379,16 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = SettingsStore()
     state = EnhancedAppState(settings)
-    server = EnhancedServer((args.host, args.port), state)
     url = f"http://{args.host}:{args.port}"
+    try:
+        server = EnhancedServer((args.host, args.port), state)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE and _existing_server_is_healthy(url):
+            print(f"[focus-command-center] reusing existing instance at {url}")
+            if not args.no_browser:
+                webbrowser.open(url)
+            return 0
+        raise
     print(f"[focus-command-center] running at {url}")
     print("[focus-command-center] local data remains on this machine")
     if settings.load()["auto_start_assistant"]:
@@ -429,6 +406,15 @@ def main(argv: list[str] | None = None) -> int:
         state.stop_assistant()
         server.server_close()
     return 0
+
+
+def _existing_server_is_healthy(url: str) -> bool:
+    try:
+        with urlopen(f"{url}/api/health", timeout=1.5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            return response.status == 200 and payload.get("ok") is True
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
 
 
 if __name__ == "__main__":

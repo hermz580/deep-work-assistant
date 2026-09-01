@@ -17,6 +17,7 @@ Privacy contract (see GOVERNANCE.md §5/§7):
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import urllib.request
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ POSE_MODEL_URL = (
     "pose_landmarker_full/float16/1/pose_landmarker_full.task"
 )
 POSE_MODEL_FILENAME = "pose_landmarker_full.task"
+POSE_MODEL_SHA256 = "5134a3aad27a58b93da0088d431f366da362b44e3ccfbe3462b3827a839011b1"
 
 # MediaPipe Pose landmark indices we read.
 NOSE, L_EAR, R_EAR, L_SHOULDER, R_SHOULDER = 0, 7, 8, 11, 12
@@ -95,7 +97,10 @@ def posture_metrics(lms) -> dict:
     dx = ear_mid[0] - sh_mid[0]
     dy = -(ear_mid[1] - sh_mid[1])  # image y grows down
     fwd = math.degrees(math.atan2(abs(dx), dy)) if dy > 0 else 90.0
-    tilt = math.degrees(math.atan2(rs[1] - ls[1], rs[0] - ls[0]))
+    raw_tilt = math.degrees(math.atan2(rs[1] - ls[1], rs[0] - ls[0]))
+    # Mirrored camera feeds can reverse left/right and yield ~±180° for
+    # level shoulders. Normalize to deviation from horizontal (-90..90).
+    tilt = ((raw_tilt + 90.0) % 180.0) - 90.0
 
     return {
         "fwd_head_deg": round(fwd, 1),
@@ -156,16 +161,40 @@ def posture_alert(window: list[float], threshold: float = DEFAULT_FWD_HEAD_THRES
 
 # ── Model provisioning (stdlib only) ────────────────────────────────
 
-def ensure_model(model_path: Path, url: str = POSE_MODEL_URL) -> Path:
-    """Download the pose model to model_path if missing. Returns path."""
+def ensure_model(
+    model_path: Path,
+    url: str = POSE_MODEL_URL,
+    *,
+    expected_sha256: str | None = None,
+) -> Path:
+    """Provision a pose model atomically, optionally enforcing a pinned hash."""
     model_path.parent.mkdir(parents=True, exist_ok=True)
     if model_path.exists() and model_path.stat().st_size > 1000:
-        return model_path
+        if expected_sha256 is None or _file_sha256(model_path) == expected_sha256:
+            return model_path
+
     req = urllib.request.Request(url, headers={"User-Agent": "DeepWorkAssistant/1.0"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = resp.read()
-    model_path.write_bytes(data)
+    if expected_sha256 is not None:
+        actual = hashlib.sha256(data).hexdigest()
+        if actual != expected_sha256:
+            raise ValueError(
+                f"pose model checksum mismatch: expected {expected_sha256}, got {actual}"
+            )
+
+    temporary = model_path.with_suffix(model_path.suffix + ".download")
+    temporary.write_bytes(data)
+    temporary.replace(model_path)
     return model_path
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def model_cache_dir() -> Path:
@@ -200,14 +229,20 @@ def grab_frame(cam_index: int = 0):
     if cv2 is None:
         return None
     cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        return None
-    ok, frame = cap.read()
-    cap.release()
-    return frame if ok else None
+    try:
+        if not cap.isOpened():
+            return None
+        ok, frame = cap.read()
+        return frame if ok else None
+    finally:
+        cap.release()
 
 
-def probe_motion(cam_index: int = 0, interval: float = 2.0) -> tuple[bool, float]:
+def probe_motion(
+    cam_index: int = 0,
+    interval: float = 2.0,
+    cancel_event=None,
+) -> tuple[bool, float]:
     """Grab two frames `interval` apart, return (ok, motion_score).
 
     Frames are downscaled to grayscale PROBE_W x PROBE_H first. Camera
@@ -216,11 +251,20 @@ def probe_motion(cam_index: int = 0, interval: float = 2.0) -> tuple[bool, float
     cv2 = _load_cv2()
     if cv2 is None:
         return False, 0.0
+    if cancel_event is not None and cancel_event.is_set():
+        return False, 0.0
     a = grab_frame(cam_index)
     if a is None:
         return False, 0.0
     import time
-    time.sleep(interval)
+    delay = max(0.0, interval)
+    if cancel_event is not None:
+        if cancel_event.wait(delay):
+            return False, 0.0
+    else:
+        time.sleep(delay)
+    if cancel_event is not None and cancel_event.is_set():
+        return False, 0.0
     b = grab_frame(cam_index)
     if b is None:
         return False, 0.0
@@ -232,24 +276,43 @@ def probe_motion(cam_index: int = 0, interval: float = 2.0) -> tuple[bool, float
     return True, motion_score(gray_downscale(a), gray_downscale(b))
 
 
-def run_check(cam_index: int = 0, interval: float = 2.0) -> dict:
+def run_check(cam_index: int = 0, interval: float = 2.0, cancel_event=None) -> dict:
     """One-shot sensing check: motion score + posture metrics.
 
-    Downloads the model on first use (user-scoped cache), opens the
-    camera only for the probe frames, processes in memory. Returns a
+    Requires an explicitly provisioned, checksum-verified local model, opens
+    the camera only for the probe frames, and processes in memory. Returns a
     dict: available, motion, posture (or None), error.
     """
     ok, reason = camera_available()
     if not ok:
         return {"available": False, "motion": None, "posture": None, "error": reason}
 
-    import cv2
-    import mediapipe as mp
-    from mediapipe.tasks import python as mp_python
-    from mediapipe.tasks.python import vision as mp_vision
-
     model = model_cache_dir() / POSE_MODEL_FILENAME
-    ensure_model(model, url=POSE_MODEL_URL)
+    if not model.exists() or model.stat().st_size <= 1000:
+        return {
+            "available": False,
+            "motion": None,
+            "posture": None,
+            "error": "pose model missing; run: deep-work-assistant vision provision",
+        }
+    if _file_sha256(model) != POSE_MODEL_SHA256:
+        return {
+            "available": False,
+            "motion": None,
+            "posture": None,
+            "error": "pose model checksum mismatch; run: deep-work-assistant vision provision",
+        }
+
+    if cancel_event is not None and cancel_event.is_set():
+        return {"available": False, "motion": None, "posture": None, "error": "vision probe cancelled"}
+
+    try:
+        import cv2
+        import mediapipe as mp
+        from mediapipe.tasks import python as mp_python
+        from mediapipe.tasks.python import vision as mp_vision
+    except (ImportError, ModuleNotFoundError) as exc:
+        return {"available": False, "motion": None, "posture": None, "error": str(exc)}
 
     options = mp_vision.PoseLandmarkerOptions(
         base_options=mp_python.BaseOptions(model_asset_path=str(model)),
@@ -259,22 +322,32 @@ def run_check(cam_index: int = 0, interval: float = 2.0) -> dict:
         min_tracking_confidence=0.5,
     )
     landmarker = mp_vision.PoseLandmarker.create_from_options(options)
+    try:
+        motion_ok, motion = probe_motion(
+            cam_index,
+            interval,
+            cancel_event=cancel_event,
+        )
+        if cancel_event is not None and cancel_event.is_set():
+            return {"available": False, "motion": None, "posture": None, "error": "vision probe cancelled"}
+        frame = grab_frame(cam_index)
+        if frame is None:
+            return {"available": True, "motion": round(motion, 1), "posture": None,
+                    "error": "camera open but no frame delivered"}
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        result = landmarker.detect(mp_image)
 
-    motion_ok, motion = probe_motion(cam_index, interval)
-    frame = grab_frame(cam_index)
-    if frame is None:
-        return {"available": True, "motion": round(motion, 1), "posture": None,
-                "error": "camera open but no frame delivered"}
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    result = landmarker.detect(mp_image)
-
-    posture = None
-    if result.pose_landmarks:
-        posture = posture_metrics(result.pose_landmarks[0])
-    return {
-        "available": True,
-        "motion": round(motion, 1),
-        "posture": posture,
-        "error": None,
-    }
+        posture = None
+        if result.pose_landmarks:
+            posture = posture_metrics(result.pose_landmarks[0])
+        return {
+            "available": True,
+            "motion": round(motion, 1),
+            "posture": posture,
+            "error": None,
+        }
+    finally:
+        close = getattr(landmarker, "close", None)
+        if close is not None:
+            close()
