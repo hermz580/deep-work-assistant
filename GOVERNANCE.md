@@ -39,7 +39,7 @@ before it is mentioned as "valuable":
    React scaffolds cannot drop into a Python assistant; their value is
    conceptual at most.
 4. **Integration cost** — language match, dependency weight, upkeep.
-5. **Privacy/trust** — local-only, no cloud, no telemetry.
+5. **Privacy/trust** — local by default; any optional network service is explicit, consented, and labeled.
 6. **Redundancy** — if DWA already does it, do not add it.
 
 **Judging repos requires inspection, not descriptions.** Always check
@@ -64,8 +64,8 @@ Idea → Spike (throwaway, validated) → Spec (Given/When/Then)
 
 ## 5. Correctness framework (how we know it works)
 
-1. **Test gate** — nothing merges with the suite red (175 tests as of
-   2026-08-08).
+1. **Test gate** — nothing merges with the full current suite red. CI is
+   the source of truth for the test count.
 2. **Liveness, not faith** — external watchdog probes the run loop
    (30-min cadence), revives it if dead, reports restarts only.
 3. **Behavior evidence** — every reminder, confirmation, skip, session,
@@ -107,7 +107,7 @@ authenticity, tests).
 
 | Repo | Evidence | Verdict |
 |---|---|---|
-| `deep-work-assistant` | active, 175 tests, merged PR #1 (befe233) | **Canonical. This repo.** |
+| `deep-work-assistant` | active, automated suite, merged PR #1 (befe233) | **Canonical. This repo.** |
 | `convoscope-v2` | real Python package (analyzer lanes, CI, MIT), no tests | **Architectural reference** for analytics lane |
 | `bloom` | 591KB, stale Feb 2026, AI Studio scaffold README, no tests | **Concept only** (wellness UI ideas) |
 | `o-sscroll-` | 786KB, AI Studio scaffold, no tests, touched Jul 2026 | **Direction only** (face-analysis interest) |

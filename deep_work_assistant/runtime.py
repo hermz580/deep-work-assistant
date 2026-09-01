@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes as wintypes
+import os
 from datetime import datetime, timezone
 
 import psutil
@@ -9,8 +10,12 @@ import psutil
 from .engine import ActivitySample
 
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+if os.name == 'nt':
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+else:
+    user32 = None
+    kernel32 = None
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -21,6 +26,13 @@ class LASTINPUTINFO(ctypes.Structure):
 
 
 class WindowsActivityProbe:
+    def __init__(self) -> None:
+        if user32 is None or kernel32 is None:
+            raise RuntimeError(
+                'Live activity capture requires Windows. '
+                'Use `deep-work-assistant simulate` to verify the engine on this platform.'
+            )
+
     def sample(self) -> ActivitySample:
         captured_at = datetime.now(timezone.utc)
         hwnd = user32.GetForegroundWindow()
@@ -50,6 +62,8 @@ class WindowsActivityProbe:
 
     @staticmethod
     def get_idle_seconds() -> int:
+        if user32 is None or kernel32 is None:
+            raise RuntimeError('Idle-time capture requires Windows')
         info = LASTINPUTINFO()
         info.cbSize = ctypes.sizeof(LASTINPUTINFO)
         if not user32.GetLastInputInfo(ctypes.byref(info)):
