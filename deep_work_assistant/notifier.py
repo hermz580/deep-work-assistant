@@ -23,6 +23,13 @@ except ImportError:  # pragma: no cover
     get_stretch_suggestions = None
 
 
+def _safe_console_print(message: str) -> None:
+    """Print without crashing on legacy Windows console encodings."""
+    encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+    safe_message = message.encode(encoding, errors='replace').decode(encoding)
+    print(safe_message)
+
+
 class DesktopNotifier:
     def __init__(self, app_id: str = 'Deep Work Assistant', dry_run: bool = False) -> None:
         self.app_id = app_id
@@ -36,7 +43,7 @@ class DesktopNotifier:
         fullscreen stretch overlay instead.
         """
         if self.dry_run:
-            print(f'[interactive-reminder] {stage}: {title} — {message}')
+            _safe_console_print(f'[interactive-reminder] {stage}: {title} — {message}')
             return True
 
         skip_state = load_skip_state()
@@ -63,7 +70,7 @@ class DesktopNotifier:
 
     def notify(self, title: str, message: str) -> bool:
         if self.dry_run:
-            print(f'[notification] {title} — {message}')
+            _safe_console_print(f'[notification] {title} — {message}')
             return True
 
         popup_started = self._spawn_popup(title, message)
