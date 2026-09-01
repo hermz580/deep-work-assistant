@@ -75,6 +75,14 @@ Raw frames are processed in memory and discarded. Stored vision events contain s
 
 DWA does **not** yet learn a personal posture baseline. Current posture alerts use a generic fixed threshold sustained across recent samples. Consent-driven calibration is a separate milestone.
 
+If you want the assistant loop with **no visible terminal window**, use the hidden launcher instead:
+
+```text
+run_deep_work_assistant_background.vbs
+```
+
+That starts `pythonw` in the background so you only see the reminder popups/overlays.
+
 ## Command Center
 
 The canonical interface is `deep_work_assistant.web_ui_v2` / `deep-work-ui`. It includes:

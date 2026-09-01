@@ -166,10 +166,10 @@ def get_stretch_suggestions(category: str = 'general', count: int = 2) -> list[d
 
 STREAK_MESSAGES: list[str] = [
     "You're on a roll! {streak} days of focused work in a row. Keep it going!",
-    "Day {streak} of the streak — consistency is the superpower nobody talks about.",
-    "Look at you! {streak} days deep. Your discipline is inspiring.",
-    "Streak alert: {streak} days! Momentum is building. Don't break the chain.",
-    "Day {streak} ✅. Every session compounds. Future you is unstoppable.",
+    "Day {streak} of your focus streak — consistency is the superpower nobody talks about.",
+    "Look at you! {streak} focus days deep. Your discipline is inspiring.",
+    "Focus streak alert: {streak} days! Momentum is building. Don't break the chain.",
+    "Day {streak} of your focus streak ✅. Every session compounds. Future you is unstoppable.",
 ]
 
 LEGACY_MESSAGES: list[str] = [
