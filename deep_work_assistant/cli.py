@@ -22,6 +22,7 @@ from .engine import (
     summary_from_record,
 )
 from .history import HistoryStore
+from .mind import DWAMind
 from .interactive_popup import (
     ReminderResponseWatcher,
     load_skip_state,
@@ -70,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
         description='Adaptive deep work reminders for Windows',
     )
     sub = parser.add_subparsers(dest='command')
+
+    mind = sub.add_parser('mind', help="Show DWA Mind — the assistant's private memory bank")
+    mind.add_argument('--base', type=Path, default=None, help='Mind data directory override')
+    mind.add_argument('--query', type=str, default=None, help='Recall episodes/insights matching text')
+    mind.add_argument('--consolidate', action='store_true', help='Re-derive insights now')
 
     run = sub.add_parser('run', help='Run the live assistant loop')
     run.add_argument('--history', type=Path, default=HistoryStore.default().path)
@@ -358,6 +364,10 @@ def main(argv: list[str] | None = None) -> int:
     if command == 'git':
         return _handle_git_command(args)
 
+    # ── DWA Mind ──
+    if command == 'mind':
+        return _handle_mind_command(args)
+
     history = HistoryStore(args.history)
     return run_live_loop(
         history=history,
@@ -375,6 +385,32 @@ def main(argv: list[str] | None = None) -> int:
         vision_sample_interval=args.vision_sample_interval,
         vision_frame_interval=args.vision_frame_interval,
     )
+
+
+def _handle_mind_command(args: argparse.Namespace) -> int:
+    """Handle `mind` — inspect DWA's private memory bank."""
+    mind = DWAMind(args.base)
+    if args.consolidate:
+        insights = mind.consolidate()
+        print(f'[dwa-mind] consolidated: {len(insights)} insights')
+    status = mind.status()
+    print(f"🧠 DWA Mind — {status['base']}")
+    print(f"   episodes: {status['episode_count']}  insights: {status['insight_count']}  consolidated: {status['consolidated_at'] or 'never'}")
+    insights = mind.recall(args.query) if args.query else mind.load_insights()
+    if insights:
+        print('\nLearned insights:')
+        for insight in insights[:10]:
+            print(f"  • [{insight.get('kind', '?')}] {insight.get('statement', '')} (confidence {insight.get('confidence', 0):.0%})")
+    else:
+        print('\nNo insights yet — DWA records experience as it works and distills patterns over time.')
+    if args.query:
+        episodes = mind.recall(args.query, limit=10)
+        episode_hits = [e for e in episodes if e.get('kind') not in ('pattern', 'trend')]
+        if episode_hits:
+            print(f'\nMatching episodes ({len(episode_hits)}):')
+            for episode in episode_hits[:5]:
+                print(f"  • {episode.get('recorded_at', '?')} [{episode.get('kind')}] {json.dumps(episode.get('data', {}))[:120]}")
+    return 0
 
 
 def _handle_card_command(args: argparse.Namespace) -> int:
@@ -845,6 +881,7 @@ def run_live_loop(
     voice_notifier = VoiceNotifier(enabled=voice_enabled, dry_run=dry_run)
     notifier = ChainedNotifier(desktop_notifier, voice_notifier, pre_announce=voice_pre_announce)
     probe = WindowsActivityProbe()
+    mind = DWAMind()
     recent = history.load_recent()
     plan = build_adaptive_plan(recent)
     laptop_profile = analyze_laptop_use(recent)
@@ -887,6 +924,8 @@ def run_live_loop(
     print(f'[deep-work-assistant] history file: {history.path}')
     print(f'[deep-work-assistant] focus streak: {focus_streak.current_streak} days (voice={"on" if voice_enabled else "off"})')
     print(f'[deep-work-assistant] kanban board: {board.db_path} ({board.total_cards()} cards)')
+    mind_status = mind.status()
+    print(f"[deep-work-assistant] mind: {mind_status['base']} ({mind_status['episode_count']} episodes, {mind_status['insight_count']} insights)")
 
     try:
         response_watcher = ReminderResponseWatcher()
@@ -918,6 +957,7 @@ def run_live_loop(
                 if not accepted:
                     print(f'[deep-work-assistant] ignored unmatched reminder response: {stage} -> {response}')
                     continue
+                mind.record_reminder_outcome(stage, response)
                 skip_state = record_response(load_skip_state(), stage, response)
                 save_skip_state(skip_state)
                 print(f'[deep-work-assistant] reminder response: {stage} -> {response} '
@@ -928,6 +968,8 @@ def run_live_loop(
         summary = assistant.finalize_session(datetime.now(timezone.utc), ended_reason='manual')
         if summary:
             history.append(summary)
+            mind.record_session(summary.to_record())
+            mind.consolidate()
             save_streak(assistant.focus_streak)
             _maybe_write_obsidian_log(obsidian_vault, summary, assistant.reminder_plan)
             print(f'[deep-work-assistant] saved final session {summary.session_id}')
@@ -1094,6 +1136,10 @@ def _handle_events(
             summary = event.data['summary']
             session_summary = summary_from_record(summary)
             history.append(session_summary)
+            mind.record_session(summary)
+            insights = mind.consolidate()
+            if insights:
+                print(f'[deep-work-assistant] mind: {len(insights)} active insights')
             recent = history.load_recent()
             assistant.reminder_plan = build_adaptive_plan(recent)
             assistant.laptop_use_profile = analyze_laptop_use(recent)
