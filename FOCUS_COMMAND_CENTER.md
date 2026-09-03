@@ -30,6 +30,7 @@ The interface opens at `http://127.0.0.1:8791`. The server binds to localhost by
 - Start or stop a Deep Work Assistant process using saved launch settings.
 - Inspect the adaptive hydration, stretch, and meal schedule.
 - Read the actual productivity score, streak, local profile, insights, and 14-day focus trend.
+- See the latest local-only posture/activity metrics, posture-reset state, and privacy status in the Vision panel.
 - Use `Ctrl+Enter` to start focus and `Ctrl+K` to jump to board search.
 
 ### Work Board
@@ -61,6 +62,7 @@ Settings are stored in `~/.deep_work_assistant/ui_settings.json`.
 - Configure default focus and break lengths.
 - Configure assistant poll interval and reminder response window.
 - Enable optional voice reminders and pre-announcement.
+- Opt in to privacy-gated local posture vision and set its 30–60 second sampling cadence.
 - Set an Obsidian vault path.
 - Optionally start the assistant when the UI launches.
 - Check Python, Windows capture readiness, optional voice support, data paths, and local record counts.

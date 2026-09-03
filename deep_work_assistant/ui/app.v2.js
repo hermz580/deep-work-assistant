@@ -126,6 +126,7 @@ function renderAll() {
   renderCategories(data.categories || {});
   renderPomodoro(data.pomodoro || {state: 'idle'});
   renderAssistant(data.assistant || {});
+  renderVision(data.vision || {enabled: false, status: 'disabled'});
   renderCardSelect();
   renderDiagnostics(data.diagnostics || {});
   renderLogs(data.assistant?.recent_log || []);
@@ -381,6 +382,47 @@ function renderAssistant(assistant) {
   $('#assistantButton').classList.toggle('danger', Boolean(assistant.running));
 }
 
+function renderVision(vision) {
+  const latest = vision.latest || null;
+  const statusLabels = {disabled: 'OFF', waiting: 'WAITING', active: 'LIVE', attention: 'RESET', unavailable: 'CHECK'};
+  $('#visionStatus').textContent = statusLabels[vision.status] || 'CHECK';
+  $('#visionPanel').dataset.status = vision.status || 'unavailable';
+  $('#visionPrivacy').textContent = vision.privacy || 'Metrics only · no images stored';
+  $('#visionFigure').classList.toggle('alert', vision.status === 'attention');
+  if (!vision.enabled) {
+    $('#visionActivity').textContent = 'Vision is off';
+    $('#visionMessage').textContent = 'Enable local vision in System Config, then start the assistant.';
+  } else if (!latest) {
+    $('#visionActivity').textContent = 'Waiting for human activity';
+    $('#visionMessage').textContent = 'Camera checks run only during an active human focus session.';
+  } else if (vision.status === 'attention') {
+    $('#visionActivity').textContent = 'Posture reset recommended';
+    $('#visionMessage').textContent = 'Sit back, drop your shoulders, and bring your head over your spine.';
+  } else if (vision.status === 'unavailable') {
+    $('#visionActivity').textContent = 'Vision check unavailable';
+    $('#visionMessage').textContent = latest.error || 'Check camera and local pose-model readiness.';
+  } else {
+    $('#visionActivity').textContent = `${String(latest.activity || 'active').replaceAll('_', ' ')} detected`;
+    $('#visionMessage').textContent = 'Brief local check complete. No frame left memory or this device.';
+  }
+  const posture = latest?.posture || {};
+  const degree = value => value !== null && value !== undefined && Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}°` : '—';
+  $('#visionHead').textContent = degree(posture.fwd_head_deg);
+  $('#visionShoulder').textContent = degree(posture.shoulder_tilt_deg);
+  $('#visionMotion').textContent = latest?.motion !== null && latest?.motion !== undefined && Number.isFinite(Number(latest.motion)) ? Number(latest.motion).toFixed(1) : '—';
+  $('#visionTime').textContent = latest?.captured_at ? new Date(latest.captured_at).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) : '—';
+}
+
+async function refreshVision() {
+  try {
+    const vision = await api('/api/vision');
+    if (state.data) state.data.vision = vision;
+    renderVision(vision);
+  } catch (error) {
+    renderVision({enabled: true, status: 'unavailable', latest: {error: error.message}});
+  }
+}
+
 function openCard(id = null) {
   const card = id ? state.cards.find(item => item.card_id === id) : null;
   $('#cardDialogTitle').textContent = card ? 'Edit card' : 'New card';
@@ -493,10 +535,13 @@ function renderSettingsForm() {
   $('#settingLongBreak').value = settings.long_break_minutes ?? 15;
   $('#settingPoll').value = settings.poll_interval ?? 15;
   $('#settingResponse').value = settings.response_window ?? 10;
+  $('#settingVisionSample').value = settings.vision_sample_interval ?? 60;
+  $('#settingVisionFrame').value = settings.vision_frame_interval ?? .4;
   $('#settingObsidian').value = settings.obsidian_vault ?? '';
   $('#settingVoice').checked = Boolean(settings.voice);
   $('#settingPreannounce').checked = Boolean(settings.voice_pre_announce);
   $('#settingAutoStart').checked = Boolean(settings.auto_start_assistant);
+  $('#settingVision').checked = Boolean(settings.vision_enabled);
   $('#settingReducedMotion').checked = settings.motion === 'reduced';
 }
 
@@ -510,6 +555,9 @@ async function saveSettings() {
     long_break_minutes: Number($('#settingLongBreak').value),
     poll_interval: Number($('#settingPoll').value),
     response_window: Number($('#settingResponse').value),
+    vision_enabled: $('#settingVision').checked,
+    vision_sample_interval: Number($('#settingVisionSample').value),
+    vision_frame_interval: Number($('#settingVisionFrame').value),
     obsidian_vault: $('#settingObsidian').value,
     voice: $('#settingVoice').checked,
     voice_pre_announce: $('#settingPreannounce').checked,
@@ -520,6 +568,7 @@ async function saveSettings() {
     state.settings = await api('/api/settings', {method: 'PATCH', body: payload});
     applySettings();
     renderBoard();
+    await refreshVision();
     toast('Settings saved locally');
   } catch (error) { toast(error.message, true); }
 }
