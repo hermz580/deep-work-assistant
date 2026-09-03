@@ -4,6 +4,58 @@ Deep Work Assistant (DWA) is a local-first Windows focus and recovery companion.
 
 Version 0.5.0 is an integration alpha. The engine, Command Center, board, analytics, reminder responses, stretch escalation, and privacy-gated vision sampling exist. The current milestone is making them install, launch, report, and recover through one truthful path.
 
+- 👁️ Watches the foreground app and idle time on Windows
+- 🧠 Starts a focus session after stable active samples
+- 💧 Sends reminders at adaptive intervals with **context-aware motivational messages**
+- 🧘 **Activity-specific stretch suggestions** — coding, writing, research, communication, or creative
+- ⏰ **Time-of-day aware** — messages change for morning, afternoon, evening, and night
+- 🔥 **Focus streak tracking** — celebrates consecutive days of deep work (persisted across restarts)
+- 🗣️ **Optional voice TTS reminders** — natural speech via edge-tts (`--voice` flag)
+- 📊 Learns a local laptop-use profile from completed sessions: dominant app category, flow style, reminder response style, and top apps
+- 🎯 Personalizes stretch/hydration wording when your pattern shows coding, writing/admin, research, communication, or creative work
+- 📝 Logs completed sessions locally in JSONL
+- 🔄 Adjusts future intervals based on recent session behavior
+- 👁️ **Optional local vision** — brief posture/activity probes only during
+  human-active focus sessions; raw frames are discarded and never uploaded
+
+## Vision Phase 2 — human-active posture and activity sensing
+
+Vision is explicit opt-in. Install the optional local dependencies, then start
+the loop with `--vision`:
+
+```bash
+pip install "deep-work-assistant[vision]"
+python -m deep_work_assistant vision provision  # one explicit, checksum-verified model download
+python -m deep_work_assistant run --vision
+```
+
+The live loop never downloads anything or sends camera data over the network.
+The only network step is the explicit `vision provision` command above; it
+pins and verifies the model's SHA-256 before installation.
+
+The runtime is deliberately privacy-gated:
+
+- probe cadence is constrained to **30–60 seconds** (default: 60 seconds);
+- frame-to-frame motion comparison is constrained to **0.1–5 seconds**
+  (default: 0.4 seconds);
+- probes run only while a DWA session is active and physical keyboard/mouse
+  input says the human is active (never during agent-active or idle time);
+- the webcam opens for a few in-memory frames and releases immediately;
+- frames are discarded; only activity/posture metrics are appended to
+  `~/.deep_work_assistant/vision_events.jsonl`;
+- posture alerts require sustained bad posture (3 of the last 5 checks), not a
+  single noisy frame;
+- camera/dependency failure degrades to an `unavailable` metric instead of
+  crashing the assistant.
+
+Cadence can be tuned while keeping explicit opt-in:
+
+```bash
+python -m deep_work_assistant run --vision \
+  --vision-sample-interval 60 \
+  --vision-frame-interval 0.4
+```
+
 ## Start on Windows
 
 1. Clone or download this repository.

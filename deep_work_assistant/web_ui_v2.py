@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import errno
 import json
+import math
 import os
 import signal
 import subprocess
@@ -35,6 +36,8 @@ from .web_ui import (
 
 SETTINGS_PATH = Path.home() / ".deep_work_assistant" / "ui_settings.json"
 ASSISTANT_LOG_PATH = Path.home() / ".deep_work_assistant" / "assistant-ui.log"
+VISION_EVENTS_PATH = Path.home() / ".deep_work_assistant" / "vision_events.jsonl"
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "cinematic",
     "motion": "full",
@@ -54,6 +57,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "response_window": 10,
     "auto_start_assistant": False,
     "hide_done_cards": False,
+    "vision_enabled": False,
+    "vision_sample_interval": 60.0,
+    "vision_frame_interval": 0.4,
     "tutorial_seen_version": 0,
     "tutorial_completed_version": 0,
 }
@@ -109,6 +115,9 @@ class SettingsStore:
         clean["response_window"] = _clamp_int(value.get("response_window"), 1, 180, 10)
         clean["auto_start_assistant"] = bool(value.get("auto_start_assistant"))
         clean["hide_done_cards"] = bool(value.get("hide_done_cards"))
+        clean["vision_enabled"] = value.get("vision_enabled") is True
+        clean["vision_sample_interval"] = _clamp_float(value.get("vision_sample_interval"), 30.0, 60.0, 60.0)
+        clean["vision_frame_interval"] = _clamp_float(value.get("vision_frame_interval"), 0.1, 5.0, 0.4)
         clean["tutorial_seen_version"] = _clamp_int(value.get("tutorial_seen_version"), 0, 100, 0)
         clean["tutorial_completed_version"] = _clamp_int(value.get("tutorial_completed_version"), 0, 100, 0)
         return clean
@@ -128,12 +137,137 @@ def _clamp_float(value: Any, low: float, high: float, default: float) -> float:
         return default
 
 
+def _finite_metric(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    return numeric if math.isfinite(numeric) else None
+
+
+def _tail_lines(path: Path, *, max_lines: int = 200, max_bytes: int = 262_144) -> list[str]:
+    """Read a bounded tail without loading an ever-growing JSONL file."""
+    if max_lines <= 0 or max_bytes <= 0 or not path.exists():
+        return []
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            data = handle.read(max_bytes)
+    except OSError:
+        return []
+    if size > max_bytes:
+        first_break = data.find(b"\n")
+        data = data[first_break + 1 :] if first_break >= 0 else b""
+    return data.decode("utf-8", errors="replace").splitlines()[-max_lines:]
+
+
+def _same_origin_mutation_allowed(
+    *,
+    content_type: str,
+    origin: str,
+    host: str,
+    requires_json: bool,
+) -> bool:
+    if requires_json and content_type.split(";", 1)[0].strip().lower() != "application/json":
+        return False
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    return parsed.scheme == "http" and parsed.netloc == host
+
+
+def _vision_payload(
+    path: Path = VISION_EVENTS_PATH,
+    *,
+    enabled: bool,
+    assistant_running: bool,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return an allow-listed, metrics-only view of recent vision events."""
+    base = {
+        "enabled": enabled,
+        "privacy": "Metrics only · no images stored",
+        "sample_count": 0,
+        "latest": None,
+        "recent": [],
+        "fresh": False,
+    }
+    if not enabled:
+        return {**base, "status": "disabled"}
+
+    records: list[dict[str, Any]] = []
+    for line in _tail_lines(path):
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        posture_raw = raw.get("posture")
+        posture = None
+        if isinstance(posture_raw, dict):
+            posture = {
+                "fwd_head_deg": _finite_metric(posture_raw.get("fwd_head_deg")),
+                "shoulder_tilt_deg": _finite_metric(posture_raw.get("shoulder_tilt_deg")),
+                "nose_y_frac": _finite_metric(posture_raw.get("nose_y_frac")),
+                "visible": posture_raw.get("visible") if isinstance(posture_raw.get("visible"), bool) else False,
+            }
+        activity = raw.get("activity")
+        error = raw.get("error")
+        records.append(
+            {
+                "captured_at": raw.get("captured_at") if isinstance(raw.get("captured_at"), str) else None,
+                "activity": activity if isinstance(activity, str) else "unavailable",
+                "motion": _finite_metric(raw.get("motion")),
+                "posture_alert": raw.get("posture_alert") is True,
+                "posture": posture,
+                "error": error[:500] if isinstance(error, str) else None,
+            }
+        )
+    latest = records[-1] if records else None
+    current = now or datetime.now(timezone.utc)
+    fresh = False
+    if latest and latest.get("captured_at"):
+        try:
+            captured = datetime.fromisoformat(latest["captured_at"])
+            if captured.tzinfo is None:
+                captured = captured.replace(tzinfo=timezone.utc)
+            age = (current.astimezone(timezone.utc) - captured.astimezone(timezone.utc)).total_seconds()
+            fresh = 0 <= age <= 180
+        except (TypeError, ValueError):
+            fresh = False
+    if not assistant_running:
+        status = "stopped"
+    elif latest is None or not fresh:
+        status = "waiting"
+    elif latest["posture_alert"]:
+        status = "attention"
+    elif latest["activity"] == "unavailable" or latest["error"]:
+        status = "unavailable"
+    else:
+        status = "active"
+    return {
+        **base,
+        "status": status,
+        "sample_count": len(records),
+        "latest": latest,
+        "recent": records[-12:],
+        "fresh": fresh,
+    }
+
+
 class EnhancedAppState(AppState):
     """UI-managed assistant process with persisted launch options and log tail."""
 
-    def __init__(self, settings: SettingsStore | None = None) -> None:
+    def __init__(
+        self,
+        settings: SettingsStore | None = None,
+        vision_events_path: Path = VISION_EVENTS_PATH,
+    ) -> None:
         super().__init__()
         self.settings_store = settings or SettingsStore()
+        self.vision_events_path = vision_events_path
         self.log_path = ASSISTANT_LOG_PATH
         self._log_handle: Any = None
         self.last_command: list[str] = []
@@ -151,36 +285,62 @@ class EnhancedAppState(AppState):
         )
         return status
 
-    def start_assistant(self, options: dict[str, Any]) -> dict[str, Any]:
+    def build_assistant_command(self, settings: dict[str, Any]) -> list[str]:
+        command = [
+            sys.executable,
+            "-m",
+            "deep_work_assistant",
+            "run",
+            "--poll-interval",
+            str(settings["poll_interval"]),
+            "--start-streak",
+            str(settings["start_streak"]),
+            "--stop-streak",
+            str(settings["stop_streak"]),
+            "--start-idle-threshold",
+            str(settings["start_idle_threshold"]),
+            "--stop-idle-threshold",
+            str(settings["stop_idle_threshold"]),
+            "--response-window",
+            str(settings["response_window"]),
+        ]
+        if settings["voice"] or settings["voice_pre_announce"]:
+            command.append("--voice")
+        if settings["voice_pre_announce"]:
+            command.append("--voice-pre-announce")
+        if settings["obsidian_vault"]:
+            command.extend(["--obsidian-vault", settings["obsidian_vault"]])
+        if settings["vision_enabled"]:
+            command.extend(
+                [
+                    "--vision",
+                    "--vision-sample-interval",
+                    str(settings["vision_sample_interval"]),
+                    "--vision-frame-interval",
+                    str(settings["vision_frame_interval"]),
+                ]
+            )
+        return command
+
+    def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
+        before = self.settings_store.load()
+        saved = self.settings_store.save(updates)
+        runtime_vision_keys = {
+            "vision_enabled",
+            "vision_sample_interval",
+            "vision_frame_interval",
+        }
+        vision_changed = any(before[key] != saved[key] for key in runtime_vision_keys)
+        if vision_changed and self.assistant_status()["running"]:
+            self.stop_assistant()
+        return saved
+
+    def start_assistant(self, _options: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
             if super().assistant_status()["running"]:
                 return self.assistant_status()
-            settings = {**self.settings_store.load(), **options}
-            settings = self.settings_store.validate(settings)
-            command = [
-                sys.executable,
-                "-m",
-                "deep_work_assistant",
-                "run",
-                "--poll-interval",
-                str(settings["poll_interval"]),
-                "--start-streak",
-                str(settings["start_streak"]),
-                "--stop-streak",
-                str(settings["stop_streak"]),
-                "--start-idle-threshold",
-                str(settings["start_idle_threshold"]),
-                "--stop-idle-threshold",
-                str(settings["stop_idle_threshold"]),
-                "--response-window",
-                str(settings["response_window"]),
-            ]
-            if settings["voice"] or settings["voice_pre_announce"]:
-                command.append("--voice")
-            if settings["voice_pre_announce"]:
-                command.append("--voice-pre-announce")
-            if settings["obsidian_vault"]:
-                command.extend(["--obsidian-vault", settings["obsidian_vault"]])
+            settings = self.settings_store.load()
+            command = self.build_assistant_command(settings)
 
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             self._log_handle = self.log_path.open("a", encoding="utf-8", buffering=1)
@@ -262,6 +422,17 @@ class EnhancedHandler(CommandCenterHandler):
         if path == "/api/assistant/logs":
             self._send_json({"lines": self.enhanced_state.tail_log(120)})
             return
+        if path == "/api/vision":
+            settings = self.enhanced_state.settings_store.load()
+            assistant = self.enhanced_state.assistant_status()
+            self._send_json(
+                _vision_payload(
+                    self.enhanced_state.vision_events_path,
+                    enabled=settings["vision_enabled"],
+                    assistant_running=assistant["running"],
+                )
+            )
+            return
         if path == "/api/export/sessions":
             self._send_download("deep-work-sessions.json", self._all_sessions())
             return
@@ -275,25 +446,61 @@ class EnhancedHandler(CommandCenterHandler):
             return
         super().do_GET()
 
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._mutation_permitted(requires_json=True):
+            return
+        super().do_POST()
+
     def do_PATCH(self) -> None:  # noqa: N802
+        if not self._mutation_permitted(requires_json=True):
+            return
         path = urlparse(self.path).path
         if path == "/api/settings":
             payload = self._read_json()
             if payload is None:
                 return
-            self._send_json(self.enhanced_state.settings_store.save(payload))
+            self._send_json(self.enhanced_state.update_settings(payload))
             return
         super().do_PATCH()
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        if not self._mutation_permitted(requires_json=False):
+            return
+        super().do_DELETE()
+
+    def _mutation_permitted(self, *, requires_json: bool) -> bool:
+        content_type = self.headers.get("Content-Type", "")
+        origin = self.headers.get("Origin", "")
+        host = self.headers.get("Host", "")
+        if requires_json and content_type.split(";", 1)[0].strip().lower() != "application/json":
+            self._send_error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "JSON Content-Type required")
+            return False
+        if not _same_origin_mutation_allowed(
+            content_type=content_type,
+            origin=origin,
+            host=host,
+            requires_json=requires_json,
+        ):
+            self._send_error(HTTPStatus.FORBIDDEN, "Cross-origin mutation rejected")
+            return False
+        return True
 
     def _dashboard_payload(self) -> dict[str, Any]:
         payload = super()._dashboard_payload()
         sessions = payload.get("recent_sessions", [])
         total_seconds = sum(int(session.get("duration_seconds", 0)) for session in sessions)
+        settings = self.enhanced_state.settings_store.load()
+        assistant = self.enhanced_state.assistant_status()
         payload.update(
             {
-                "settings": self.enhanced_state.settings_store.load(),
+                "settings": settings,
+                "vision": _vision_payload(
+                    self.enhanced_state.vision_events_path,
+                    enabled=settings["vision_enabled"],
+                    assistant_running=assistant["running"],
+                ),
                 "diagnostics": self._diagnostics_payload(),
-                "assistant": self.enhanced_state.assistant_status(),
+                "assistant": assistant,
                 "session_summary": {
                     "visible_count": len(sessions),
                     "visible_seconds": total_seconds,
@@ -349,10 +556,27 @@ class EnhancedHandler(CommandCenterHandler):
         return records
 
     def _send_download(self, filename: str, payload: Any) -> None:
-        content = json.dumps(_to_dict(payload), ensure_ascii=False, indent=2).encode("utf-8")
+        content = json.dumps(
+            _to_dict(payload), ensure_ascii=False, indent=2, allow_nan=False
+        ).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+        try:
+            content = json.dumps(
+                _to_dict(payload), ensure_ascii=False, allow_nan=False
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
+            content = b'{"error":"Response contained invalid numeric data"}'
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
