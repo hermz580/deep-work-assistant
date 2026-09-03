@@ -23,6 +23,7 @@
         <button class="nav-item" data-target="sessions"><span>≋</span> Session Intelligence</button>
         <button class="nav-item" data-target="recovery"><span>⌁</span> Focus Core</button>
         <button class="nav-item" data-target="settings"><span>⚙</span> System Config</button>
+        <button class="nav-item" data-target="help"><span>?</span> Help &amp; Feedback</button>
       </nav>
       <div class="sidebar-bottom">
         <label class="theme-label" for="themeSelect">Visual system</label>
@@ -32,7 +33,7 @@
           <option value="liquid">Liquid Motion</option>
           <option value="core">AI Core</option>
         </select>
-        <div class="local-badge"><span class="status-dot"></span> Local-only data</div>
+        <div class="local-badge"><span class="status-dot"></span> Core data local · voice may use cloud</div>
       </div>
     </aside>
 
@@ -42,6 +43,7 @@
         <div class="top-actions">
           <div class="connection-pill"><span class="status-dot" id="connectionDot"></span><span id="connectionText">Connecting</span></div>
           <button class="button secondary" id="refreshButton">Refresh</button>
+          <button class="button secondary" id="helpButton">How It Works</button>
           <button class="button primary" id="assistantButton">Start Assistant</button>
         </div>
       </header>
@@ -64,7 +66,8 @@
             <div class="focus-controls">
               <select id="focusCardSelect" aria-label="Link focus session to a work card"><option value="">No linked card</option></select>
               <div class="duration-pills" role="group" aria-label="Focus duration"><button class="duration-pill" data-minutes="25">25m</button><button class="duration-pill active" data-minutes="50">50m</button><button class="duration-pill" data-minutes="90">90m</button><button class="duration-pill" data-minutes="120">120m</button></div>
-              <div class="control-row"><button class="button primary wide" id="startFocusButton">Begin Focus</button><button class="icon-button" id="pauseFocusButton" title="Pause or resume" disabled>Ⅱ</button><button class="icon-button" id="nextFocusButton" title="Move to next phase" disabled>↦</button><button class="icon-button danger" id="stopFocusButton" title="Stop session" disabled>■</button></div>
+              <div class="control-row"><button class="button primary wide" id="startFocusButton">Begin Focus</button><button class="icon-button" id="pauseFocusButton" title="Pause or resume" aria-label="Pause or resume focus timer" disabled>Ⅱ</button><button class="icon-button" id="nextFocusButton" title="Move to next phase" aria-label="Move focus timer to the next phase" disabled>↦</button><button class="icon-button danger" id="stopFocusButton" title="Stop session" aria-label="Stop focus timer" disabled>■</button></div>
+              <button class="link-button" id="focusHelpButton" type="button">How Start Assistant and Begin Focus differ</button>
               <small class="shortcut-note">Ctrl+Enter starts focus · Ctrl+K jumps to board search</small>
             </div>
           </article>
@@ -108,11 +111,39 @@
           <article class="glass-panel export-panel"><div><p class="eyebrow">LOCAL DATA PORTABILITY</p><h2>Exports</h2><p>Download exact JSON snapshots from the same local stores used by the CLI.</p></div><div class="control-row"><a class="button secondary" href="/api/export/cards">Export Cards</a><a class="button secondary" href="/api/export/sessions">Export Sessions</a></div></article>
         </div>
       </section>
+
+      <section class="page" id="help">
+        <div class="section-heading"><div><p class="eyebrow">ONE GUIDE · ONE SOURCE OF TRUTH</p><h2>How Deep Work Assistant works</h2></div><button class="button primary" id="reopenTutorialButton">Start Tutorial</button></div>
+        <div id="tutorialGuide" class="tutorial-guide" aria-label="Deep Work Assistant tutorial"></div>
+        <div class="help-grid">
+          <article class="glass-panel faq-panel"><div class="panel-heading"><div><p class="eyebrow">PLAIN ANSWERS</p><h2>Questions, comments &amp; concerns</h2></div></div>
+            <div class="faq-list">
+              <details><summary>Why did my timer run without reminders?</summary><p><strong>Begin Focus</strong> is the manual timer. Recovery reminders come from <strong>Start Assistant</strong>, which runs the Windows activity detector. They are separate today and the interface says so.</p></details>
+              <details><summary>Why did a session not appear?</summary><p>Automatic sessions need stable, human-active Windows use and are saved when the assistant detects a break or shuts down cleanly. Agent-dominated work is labeled separately.</p></details>
+              <details><summary>Why did a reminder arrive later than expected?</summary><p>Recovery clocks advance only during human-active work. Idle and agent-active time pause them.</p></details>
+              <details><summary>What triggers the stretch overlay?</summary><p>Two accepted, consecutive stretch skips trigger a 60-second fullscreen overlay on the primary monitor. A response that does not match an active reminder no longer changes the skip count.</p></details>
+              <details><summary>What counts toward a streak?</summary><p>A completed automatic session needs at least ten minutes of human-active time and must not be agent-dominated. A missed day resets the current streak display.</p></details>
+              <details><summary>What information stays local?</summary><p>Session history, board cards, reminder outcomes, settings, and optional vision metrics stay on this machine. Raw camera frames are discarded. Optional voice uses an online TTS service when enabled.</p></details>
+              <details><summary>Does posture sensing learn my body?</summary><p>No. Optional vision currently uses a generic, uncalibrated threshold after explicit command-line opt-in. Personal posture calibration is a later milestone.</p></details>
+            </div>
+          </article>
+          <form class="glass-panel support-panel" id="supportForm"><div><p class="eyebrow">LOCAL SUPPORT NOTE</p><h2>Prepare a useful report</h2><p>Nothing is sent automatically. Review the note before posting it. Opening GitHub leaves this local interface.</p></div>
+            <label>Category<select id="supportCategory"><option>Question</option><option>Comment</option><option>Concern</option><option>Bug</option><option>Accessibility</option><option>Privacy</option></select></label>
+            <label>What happened?<textarea id="supportHappened" rows="3" maxlength="2000"></textarea></label>
+            <label>What did you expect?<textarea id="supportExpected" rows="3" maxlength="2000"></textarea></label>
+            <label>How can it be reproduced?<textarea id="supportReproduce" rows="3" maxlength="2000"></textarea></label>
+            <label class="switch-row"><input type="checkbox" id="supportDiagnostics" checked><span>Include sanitized diagnostics</span></label>
+            <label>Support note preview<textarea id="supportPreview" rows="10" readonly></textarea></label>
+            <div class="control-row support-actions"><button class="button primary" id="copySupportButton" type="button">Copy Support Note</button><a class="button secondary" href="https://github.com/hermz580/deep-work-assistant/issues/new" target="_blank" rel="noopener noreferrer">Open GitHub Issue</a><a class="button secondary" href="/api/export/sessions">Export My Data</a></div>
+          </form>
+        </div>
+      </section>
     </main>
   </div>
 
   <dialog id="cardDialog"><form method="dialog" id="cardForm"><div class="dialog-heading"><div><p class="eyebrow">WORK ITEM</p><h2 id="cardDialogTitle">New card</h2></div><button class="icon-button" value="cancel" aria-label="Close">×</button></div><input type="hidden" id="cardId"><label>Title<input id="cardTitle" required maxlength="140"></label><label>Description<textarea id="cardDescription" rows="4" maxlength="1200"></textarea></label><div class="form-grid"><label>Column<select id="cardColumn"><option value="backlog">Backlog</option><option value="ready">Ready</option><option value="in_progress">In Progress</option><option value="review">Review</option><option value="done">Done</option></select></label><label>Priority<select id="cardPriority"><option value="0">Normal</option><option value="1">High</option><option value="2">Urgent</option></select></label></div><label>Tags<input id="cardTags" placeholder="research, client, backend"></label><div class="form-grid"><label>Linked app pattern<input id="cardApp" placeholder="code.exe"></label><label>Window title pattern<input id="cardWindow" placeholder="deep-work-assistant"></label></div><label>Log additional minutes<input id="cardLogMinutes" type="number" min="0" max="1440" value="0"></label><div class="dialog-actions"><button type="button" class="button danger ghost" id="deleteCardButton" hidden>Delete</button><span></span><button value="cancel" class="button secondary">Cancel</button><button type="submit" class="button primary">Save Card</button></div></form></dialog>
   <dialog id="sessionDialog"><div class="dialog-heading"><div><p class="eyebrow">SESSION RECORD</p><h2 id="sessionDialogTitle">Session details</h2></div><button class="icon-button" id="closeSessionDialog" aria-label="Close">×</button></div><div id="sessionDetail" class="session-detail"></div></dialog>
+  <dialog id="tutorialDialog" aria-labelledby="tutorialTitle" aria-describedby="tutorialBody"><div class="tutorial-dialog"><div class="dialog-heading"><div><p class="eyebrow" id="tutorialProgress" aria-live="polite">STEP 1 OF 6</p><h2 id="tutorialTitle" tabindex="-1">How Deep Work Assistant works</h2></div><button class="icon-button" id="closeTutorialButton" aria-label="Close tutorial">×</button></div><div id="tutorialBody" class="tutorial-body"></div><div class="dialog-actions tutorial-actions"><button class="button secondary" id="tutorialSkipButton" type="button">Skip for Now</button><button class="button secondary" id="tutorialBackButton" type="button">Back</button><button class="button primary" id="tutorialNextButton" type="button">Next</button></div></div></dialog>
   <div id="toastRegion" class="toast-region" aria-live="polite"></div>
   <script src="/app.v2.js"></script>
 </body>

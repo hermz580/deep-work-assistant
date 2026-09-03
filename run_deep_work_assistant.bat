@@ -4,7 +4,8 @@ setlocal
 cd /d %~dp0
 
 rem ── Load personal config (gitignored) ──
-if exist "startup\local_config.bat" call "startup\local_config.bat"
+if exist "local_config.bat" call "local_config.bat"
+if not exist "local_config.bat" if exist "startup\local_config.bat" call "startup\local_config.bat"
 
 if exist .venv\Scripts\python.exe (
     set PY=.venv\Scripts\python.exe

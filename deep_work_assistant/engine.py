@@ -16,6 +16,11 @@ from .messages import build_reminder_message, build_session_start_message
 DEFAULT_REMINDER_PLAN = (60, 120, 180)
 DEFAULT_RESPONSE_WINDOW_MINUTES = 10
 STREAK_FILE = 'deep_work_streak.json'
+MAX_SAMPLE_GAP_SECONDS = 300
+ADHERED_REMINDER_OUTCOMES = frozenset({'break', 'confirmed', 'completed'})
+RESISTED_REMINDER_OUTCOMES = frozenset(
+    {'continued', 'ignored', 'skipped', 'timeout', 'overridden'}
+)
 
 # Idle threshold (seconds of no *human* input) above which foreground/window
 # changes are attributed to automated agents rather than the human.
@@ -152,6 +157,8 @@ class LaptopUseProfile:
     break_response_style: str = 'unknown'
     top_apps: tuple[str, ...] = ()
     suggested_plan: ReminderPlan = field(default_factory=ReminderPlan)
+    evidence_sessions: int = 0
+    confidence: str = 'none'
 
     def to_record(self) -> dict[str, Any]:
         return {
@@ -159,6 +166,8 @@ class LaptopUseProfile:
             'flow_style': self.flow_style,
             'break_response_style': self.break_response_style,
             'top_apps': list(self.top_apps),
+            'evidence_sessions': self.evidence_sessions,
+            'confidence': self.confidence,
             'suggested_plan': {
                 'hydration_minutes': self.suggested_plan.hydration_minutes,
                 'stretch_minutes': self.suggested_plan.stretch_minutes,
@@ -210,7 +219,33 @@ def save_streak(streak: FocusStreak, path: Path | None = None) -> None:
     """Save streak data to JSON file."""
     path = path or Path.home() / '.deep_work_assistant' / STREAK_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(streak.to_record(), indent=2), encoding='utf-8')
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    temporary.write_text(json.dumps(streak.to_record(), indent=2), encoding='utf-8')
+    temporary.replace(path)
+
+
+def effective_streak(streak: FocusStreak, as_of: date | None = None) -> FocusStreak:
+    """Project stored streak data into an honest display value for a date."""
+    today = as_of or datetime.now(timezone.utc).astimezone().date()
+    if not streak.last_session_date:
+        return streak
+    try:
+        last_session = date.fromisoformat(streak.last_session_date)
+    except ValueError:
+        return FocusStreak(longest_streak=streak.longest_streak)
+    current = streak.current_streak if last_session >= today - timedelta(days=1) else 0
+    daily_count = streak.daily_session_count if last_session == today else 0
+    return FocusStreak(
+        current_streak=current,
+        longest_streak=streak.longest_streak,
+        last_session_date=streak.last_session_date,
+        daily_session_count=daily_count,
+    )
+
+
+def qualifies_for_streak(summary: 'SessionSummary') -> bool:
+    """Only ten human-active minutes in a human-led session count."""
+    return summary.human_active_seconds >= 600 and not summary.agent_dominated
 
 
 def advance_streak(streak: FocusStreak, session_date: date | None = None) -> FocusStreak:
@@ -274,6 +309,7 @@ class ActiveSession:
     started_at: datetime
     primary_app: str
     last_sample_at: datetime
+    last_human_active_at: datetime
     focus_sample_count: int = 0
     idle_total_seconds: int = 0
     sample_count: int = 0
@@ -377,8 +413,8 @@ def analyze_laptop_use(history: Sequence[Any], window: int = 24) -> LaptopUsePro
     else:
         flow_style = 'balanced'
 
-    continued = reminder_outcomes['continued'] + reminder_outcomes['ignored']
-    breaks = reminder_outcomes['break']
+    continued = sum(reminder_outcomes[outcome] for outcome in RESISTED_REMINDER_OUTCOMES)
+    breaks = sum(reminder_outcomes[outcome] for outcome in ADHERED_REMINDER_OUTCOMES)
     if continued > breaks:
         break_response_style = 'pushes-through-reminders'
     elif breaks > continued:
@@ -408,6 +444,8 @@ def analyze_laptop_use(history: Sequence[Any], window: int = 24) -> LaptopUsePro
         break_response_style=break_response_style,
         top_apps=tuple(app for app, _ in app_counts.most_common(5)),
         suggested_plan=suggested_plan,
+        evidence_sessions=len(sessions),
+        confidence=('early' if len(sessions) < 3 else 'emerging' if len(sessions) < 8 else 'established'),
     )
 
 
@@ -433,12 +471,10 @@ def build_adaptive_plan(history: Sequence[Any], window: int = 12) -> ReminderPla
         reminder_scores: list[float] = []
         for reminder in _reminder_list(session):
             outcome = str(reminder.get('outcome', '')).lower()
-            if outcome == 'continued':
+            if outcome in RESISTED_REMINDER_OUTCOMES:
                 reminder_scores.append(1.0)
-            elif outcome == 'break':
+            elif outcome in ADHERED_REMINDER_OUTCOMES:
                 reminder_scores.append(-1.0)
-            elif outcome == 'ignored':
-                reminder_scores.append(-0.5)
         if reminder_scores:
             session_scores.append(sum(reminder_scores) / len(reminder_scores))
 
@@ -465,6 +501,7 @@ class DeepWorkAssistant:
         focus_streak: FocusStreak | None = None,
         session_id_factory: Any | None = None,
         voice_enabled: bool = False,
+        max_sample_gap_seconds: int = MAX_SAMPLE_GAP_SECONDS,
     ) -> None:
         self.reminder_plan = reminder_plan or (laptop_use_profile.suggested_plan if laptop_use_profile else ReminderPlan(*DEFAULT_REMINDER_PLAN))
         self.laptop_use_profile = laptop_use_profile or LaptopUseProfile(suggested_plan=self.reminder_plan)
@@ -476,6 +513,7 @@ class DeepWorkAssistant:
         self.stop_idle_threshold_seconds = int(stop_idle_threshold_seconds)
         self.response_window_minutes = int(response_window_minutes)
         self.session_id_factory = session_id_factory or (lambda: f'dwa-{uuid4().hex[:8]}')
+        self.max_sample_gap_seconds = max(1, int(max_sample_gap_seconds))
 
         self.current_session: ActiveSession | None = None
         self.latest_vision_observation: dict[str, Any] | None = None
@@ -484,6 +522,22 @@ class DeepWorkAssistant:
 
     def process_sample(self, sample: ActivitySample) -> list[EngineEvent]:
         events: list[EngineEvent] = []
+        if self.current_session is not None:
+            gap = (sample.captured_at - self.current_session.last_sample_at).total_seconds()
+            if gap > self.max_sample_gap_seconds:
+                finished_at = self.current_session.last_sample_at
+                summary = self.finalize_session(finished_at, ended_reason='sample-gap')
+                if summary is not None:
+                    events.append(
+                        EngineEvent(
+                            'session_ended',
+                            {
+                                'summary': summary.to_record(),
+                                'focus_streak': self.focus_streak.to_record(),
+                            },
+                        )
+                    )
+                self._previous_sample = None
         if self.current_session is None:
             self._advance_start_streak(sample)
             if self._start_streak >= self.start_streak_required:
@@ -515,6 +569,8 @@ class DeepWorkAssistant:
             classification = classify_sample(self._previous_sample, sample)
             if classification == 'human-active':
                 session.human_active_seconds += elapsed
+                session.focus_sample_count += 1
+                session.last_human_active_at = sample.captured_at
             elif classification == 'agent-active':
                 session.agent_active_seconds += elapsed
             session.last_sample_at = sample.captured_at
@@ -564,7 +620,9 @@ class DeepWorkAssistant:
                     )
 
             if session.inactive_streak >= self.stop_streak_required:
-                summary = self._finalize_current_session(sample.captured_at, ended_reason='break')
+                summary = self.finalize_session(sample.captured_at, ended_reason='break')
+                if summary is None:
+                    raise RuntimeError('Active session disappeared during finalization')
                 events.append(EngineEvent('session_ended', {'summary': summary.to_record(), 'focus_streak': self.focus_streak.to_record()}))
 
         self._previous_sample = sample
@@ -612,8 +670,8 @@ class DeepWorkAssistant:
             return None
         finished_at = finished_at or self.current_session.last_sample_at
         summary = self._finalize_current_session(finished_at, ended_reason=ended_reason)
-        # Advance streak on any session that lasted at least 10 minutes
-        if summary.duration_seconds >= 600:
+        # Advance only after ten human-active minutes in a human-led session.
+        if qualifies_for_streak(summary):
             self.focus_streak = advance_streak(self.focus_streak, finished_at.astimezone().date())
         return summary
 
@@ -634,6 +692,7 @@ class DeepWorkAssistant:
             started_at=sample.captured_at,
             primary_app=sample.process_name,
             last_sample_at=sample.captured_at,
+            last_human_active_at=sample.captured_at,
             focus_sample_count=1,
             idle_total_seconds=max(0, int(sample.idle_seconds)),
             sample_count=1,
@@ -665,7 +724,12 @@ class DeepWorkAssistant:
             else:
                 deadline = reminder.sent_at + timedelta(minutes=self.response_window_minutes)
                 resolved_at = finished_at
-                if ended_reason == 'break' and finished_at <= deadline:
+                last_human_delta = session.last_human_active_at - reminder.sent_at
+                broke_after_reminder = (
+                    ended_reason == 'break'
+                    and timedelta(0) <= last_human_delta <= timedelta(minutes=self.response_window_minutes)
+                )
+                if broke_after_reminder:
                     outcome = 'break'
                 elif finished_at >= deadline:
                     outcome = 'continued'

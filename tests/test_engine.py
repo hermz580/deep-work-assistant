@@ -69,6 +69,7 @@ def test_reminders_fire_once_at_each_stage():
         stop_streak_required=3,
         start_idle_threshold_seconds=180,
         stop_idle_threshold_seconds=900,
+        max_sample_gap_seconds=4 * 60 * 60,
     )
 
     assert [event.kind for event in assistant.process_sample(sample(0))] == ['session_started']

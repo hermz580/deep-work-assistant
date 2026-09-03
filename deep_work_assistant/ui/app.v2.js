@@ -13,7 +13,38 @@ const state = {
   priorityFilter: 'all',
   tagFilter: 'all',
   sessionQuery: '',
+  tutorialStep: 0,
+  tutorialChecked: false,
+  tutorialReturnFocus: null,
 };
+
+const TUTORIAL_VERSION = 1;
+const TUTORIAL_STEPS = [
+  {
+    title: 'Two controls, two jobs',
+    body: '<p><strong>Start Assistant</strong> watches Windows activity and sends hydration, stretch, meal, and optional posture reminders. <strong>Begin Focus</strong> starts the separate manual work-and-break timer. You can use either one or both.</p>',
+  },
+  {
+    title: 'Check readiness',
+    body: '<p>Open Settings & Diagnostics to confirm Windows activity capture, local storage, UI assets, and optional voice support are ready.</p><p class="truth-note">Voice is optional and uses an online TTS service. Core tracking and reminders do not require it.</p>',
+  },
+  {
+    title: 'Plan and focus',
+    body: '<p>Create a Work Board card if you want to organize the task. Link it to a focus timer when you want that timer’s completed work recorded against the card.</p><p class="truth-note">The automatic assistant and manual timer do not yet share one session identity. That connection is the next state-truth milestone.</p>',
+  },
+  {
+    title: 'Respond and recover',
+    body: '<p>Reminder time advances only while DWA sees human-active work. Agent-active and idle time pause the recovery clock. Confirm, skip, or let a reminder time out. Two accepted stretch skips trigger the 60-second primary-monitor overlay.</p>',
+  },
+  {
+    title: 'Review the evidence',
+    body: '<p>Session Intelligence shows completed sessions, applications, duration, human-versus-agent time, end reason, and recorded reminder outcomes. Work patterns and recovery intervals are calculated from local session history.</p>',
+  },
+  {
+    title: 'What DWA learns—and what it does not',
+    body: '<p>DWA learns app category, session length, flow style, and reminder-response patterns from completed sessions. It does <strong>not</strong> yet learn your personal posture baseline.</p><p class="truth-note">Optional vision is command-line opt-in. It uses brief local camera probes during human-active sessions, discards raw frames, and alerts after sustained generic threshold readings. It does not continuously record video.</p>',
+  },
+];
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -70,6 +101,7 @@ async function loadDashboard(notify = false) {
     renderAll();
     setConnection(true, 'Local system online');
     if (notify) toast('Local data refreshed');
+    await maybeOpenFirstRunTutorial();
   } catch (error) {
     setConnection(false, 'Connection failed');
     toast(error.message, true);
@@ -113,7 +145,10 @@ function renderAll() {
   $('#hydrationPlan').textContent = `${data.plan.hydration_minutes}m`;
   $('#stretchPlan').textContent = `${data.plan.stretch_minutes}m`;
   $('#eatPlan').textContent = `${data.plan.eat_minutes}m`;
-  $('#profileCategory').textContent = (data.profile.dominant_category || 'general').replaceAll('_', ' ');
+  const evidenceSessions = Number(data.profile.evidence_sessions || 0);
+  $('#profileCategory').textContent = evidenceSessions < 3
+    ? `calibrating · ${evidenceSessions}/3 sessions`
+    : `${(data.profile.dominant_category || 'general').replaceAll('_', ' ')} · ${data.profile.confidence}`;
   $('#historyPath').textContent = data.paths.history;
   renderSystemStrip();
   renderTrend(data.trend || []);
@@ -130,11 +165,15 @@ function renderAll() {
   renderCardSelect();
   renderDiagnostics(data.diagnostics || {});
   renderLogs(data.assistant?.recent_log || []);
+  renderHelp();
 }
 
 function renderSystemStrip() {
   const data = state.data;
-  $('#systemProfile').textContent = (data.profile.flow_style || data.profile.dominant_category || 'Learning').replaceAll('_', ' ');
+  const evidence = Number(data.profile.evidence_sessions || 0);
+  $('#systemProfile').textContent = evidence < 3
+    ? `Learning · ${evidence}/3 sessions`
+    : `${String(data.profile.flow_style || data.profile.dominant_category).replaceAll('_', ' ')} · ${data.profile.confidence}`;
   const best = data.best_hours?.[0];
   $('#bestWindow').textContent = best ? `${String(best.hour).padStart(2, '0')}:00 · ${fmtMinutes(best.minutes)}` : 'No data';
   const human = Math.round((data.activity_mix?.human_ratio || 0) * 100);
@@ -527,6 +566,104 @@ function stopBreathing() {
   $('#breathStopButton').disabled = true;
 }
 
+function renderHelp() {
+  $('#tutorialGuide').innerHTML = TUTORIAL_STEPS.map((step, index) => `
+    <article class="tutorial-card">
+      <span>STEP ${index + 1}</span>
+      <h3>${esc(step.title)}</h3>
+      ${step.body}
+    </article>`).join('');
+  updateSupportPreview();
+}
+
+function renderTutorialStep() {
+  const step = TUTORIAL_STEPS[state.tutorialStep];
+  $('#tutorialProgress').textContent = `STEP ${state.tutorialStep + 1} OF ${TUTORIAL_STEPS.length}`;
+  $('#tutorialTitle').textContent = step.title;
+  $('#tutorialBody').innerHTML = step.body;
+  $('#tutorialBackButton').disabled = state.tutorialStep === 0;
+  $('#tutorialNextButton').textContent = state.tutorialStep === TUTORIAL_STEPS.length - 1 ? 'Finish' : 'Next';
+}
+
+async function persistTutorial(update) {
+  try {
+    state.settings = await api('/api/settings', {method: 'PATCH', body: update});
+  } catch (error) {
+    toast(`Tutorial preference was not saved: ${error.message}`, true);
+  }
+}
+
+async function openTutorial(step = 0, trigger = document.activeElement) {
+  state.tutorialStep = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, Number(step) || 0));
+  state.tutorialReturnFocus = trigger instanceof HTMLElement ? trigger : null;
+  renderTutorialStep();
+  if (!$('#tutorialDialog').open) $('#tutorialDialog').showModal();
+  await persistTutorial({tutorial_seen_version: TUTORIAL_VERSION});
+  setTimeout(() => $('#tutorialTitle').focus(), 20);
+}
+
+function closeTutorial() {
+  if ($('#tutorialDialog').open) $('#tutorialDialog').close();
+  state.tutorialReturnFocus?.focus();
+}
+
+async function maybeOpenFirstRunTutorial() {
+  if (state.tutorialChecked || !state.settings) return;
+  state.tutorialChecked = true;
+  if (Number(state.settings.tutorial_seen_version || 0) < TUTORIAL_VERSION) {
+    await openTutorial(0, $('#assistantButton'));
+  }
+}
+
+function sanitizedDiagnostics() {
+  const value = state.data?.diagnostics || {};
+  return {
+    version: value.version || 'unknown',
+    status: value.status || 'unknown',
+    platform: value.platform || 'unknown',
+    python: value.python || 'unknown',
+    windows_activity_capture: Boolean(value.windows_activity_capture),
+    voice_available: Boolean(value.voice_available),
+    vision_installed: Boolean(value.vision?.installed),
+    posture_personalization: value.learning?.posture_personalization || 'not implemented',
+    assistant_running: Boolean(value.assistant?.running),
+  };
+}
+
+function buildSupportNote() {
+  const sections = [
+    `# Deep Work Assistant ${$('#supportCategory').value}`,
+    `\n## What happened?\n${$('#supportHappened').value.trim() || '(not provided)'}`,
+    `\n## What did you expect?\n${$('#supportExpected').value.trim() || '(not provided)'}`,
+    `\n## How can it be reproduced?\n${$('#supportReproduce').value.trim() || '(not provided)'}`,
+  ];
+  if ($('#supportDiagnostics').checked) {
+    sections.push(`\n## Sanitized diagnostics\n\`\`\`json\n${JSON.stringify(sanitizedDiagnostics(), null, 2)}\n\`\`\``);
+  }
+  sections.push('\nNothing was sent automatically; this note was reviewed before posting.');
+  return sections.join('\n');
+}
+
+function updateSupportPreview() {
+  if ($('#supportPreview')) $('#supportPreview').value = buildSupportNote();
+}
+
+async function copySupportNote() {
+  updateSupportPreview();
+  const preview = $('#supportPreview');
+  try {
+    await navigator.clipboard.writeText(preview.value);
+    toast('Support note copied. Review it before posting.');
+  } catch (_) {
+    preview.removeAttribute('readonly');
+    preview.focus();
+    preview.select();
+    const copied = document.execCommand('copy');
+    preview.setAttribute('readonly', '');
+    toast(copied ? 'Support note copied' : 'Clipboard blocked. The note is selected for manual copy.', !copied);
+  }
+}
+
 function renderSettingsForm() {
   const settings = state.settings || {};
   $('#settingFocus').value = settings.default_focus_minutes ?? 50;
@@ -576,10 +713,13 @@ async function saveSettings() {
 function renderDiagnostics(diagnostics) {
   const paths = diagnostics.paths || {};
   const cards = [
+    ['DWA build', diagnostics.version || 'Unknown', 'good'],
     ['Platform', diagnostics.platform || 'Unknown', diagnostics.windows_activity_capture ? 'good' : 'warn'],
     ['Python', diagnostics.python || 'Unknown', 'good'],
     ['Windows activity capture', diagnostics.windows_activity_capture ? 'Ready' : 'Unavailable here', diagnostics.windows_activity_capture ? 'good' : 'warn'],
     ['Voice TTS', diagnostics.voice_available ? 'Available' : 'edge-tts not installed', diagnostics.voice_available ? 'good' : 'warn'],
+    ['Vision', diagnostics.vision?.installed ? 'Installed · opt-in' : 'Not installed', diagnostics.vision?.installed ? 'warn' : 'warn'],
+    ['Posture baseline', diagnostics.vision?.personal_posture_baseline ? 'Calibrated' : 'Not learned', diagnostics.vision?.personal_posture_baseline ? 'good' : 'warn'],
     ['Stored sessions', String(diagnostics.counts?.sessions || 0), 'good'],
     ['Kanban cards', String(diagnostics.counts?.cards || 0), 'good'],
   ];
@@ -659,12 +799,16 @@ function showPage(target, label = null) {
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.target === target));
   $$('.page').forEach(page => page.classList.toggle('active', page.id === target));
   $('#pageTitle').textContent = label || $(`.nav-item[data-target="${target}"]`)?.textContent.trim() || target;
+  document.body.dataset.page = target;
   location.hash = target;
 }
 
 function bindEvents() {
   $$('.nav-item').forEach(button => button.onclick = () => showPage(button.dataset.target, button.textContent.trim()));
   $('#refreshButton').onclick = () => loadDashboard(true);
+  $('#helpButton').onclick = () => openTutorial(0, $('#helpButton'));
+  $('#focusHelpButton').onclick = () => openTutorial(0, $('#focusHelpButton'));
+  $('#reopenTutorialButton').onclick = () => openTutorial(0, $('#reopenTutorialButton'));
   $('#newCardButton').onclick = () => openCard();
   $('#cardForm').onsubmit = saveCard;
   $('#deleteCardButton').onclick = async () => {
@@ -696,11 +840,12 @@ function bindEvents() {
   $('#assistantButton').onclick = async () => {
     try {
       const running = state.data.assistant.running;
-      state.data.assistant = await api(`/api/assistant/${running ? 'stop' : 'start'}`, {method: 'POST', body: state.settings || {}});
-      renderAssistant(state.data.assistant);
-      renderLogs(state.data.assistant.recent_log || []);
-      renderSystemStrip();
-      toast(running ? 'Assistant stopped' : 'Assistant started');
+      await api(`/api/assistant/${running ? 'stop' : 'start'}`, {method: 'POST', body: state.settings || {}});
+      await new Promise(resolve => setTimeout(resolve, 350));
+      await loadDashboard();
+      if (running) toast('Assistant stopped');
+      else if (state.data.assistant.running) toast('Assistant started');
+      else toast('Assistant could not stay running. Check Diagnostics and the process log.', true);
     } catch (error) { toast(error.message, true); }
   };
   $('#breathButton').onclick = startBreathing;
@@ -721,6 +866,31 @@ function bindEvents() {
   $('#settingsForm').onsubmit = event => { event.preventDefault(); saveSettings(); };
   $('#refreshDiagnosticsButton').onclick = refreshDiagnostics;
   $('#refreshLogsButton').onclick = refreshLogs;
+  $('#closeTutorialButton').onclick = closeTutorial;
+  $('#tutorialSkipButton').onclick = closeTutorial;
+  $('#tutorialBackButton').onclick = () => {
+    state.tutorialStep = Math.max(0, state.tutorialStep - 1);
+    renderTutorialStep();
+    $('#tutorialTitle').focus();
+  };
+  $('#tutorialNextButton').onclick = async () => {
+    if (state.tutorialStep === TUTORIAL_STEPS.length - 1) {
+      await persistTutorial({
+        tutorial_seen_version: TUTORIAL_VERSION,
+        tutorial_completed_version: TUTORIAL_VERSION,
+      });
+      closeTutorial();
+      toast('Tutorial complete. Help & Feedback stays available.');
+      return;
+    }
+    state.tutorialStep += 1;
+    renderTutorialStep();
+    $('#tutorialTitle').focus();
+  };
+  $('#tutorialDialog').addEventListener('close', () => state.tutorialReturnFocus?.focus());
+  ['supportCategory', 'supportHappened', 'supportExpected', 'supportReproduce', 'supportDiagnostics']
+    .forEach(id => $(`#${id}`).addEventListener('input', updateSupportPreview));
+  $('#copySupportButton').onclick = copySupportNote;
   addEventListener('keydown', event => {
     if (event.ctrlKey && event.key === 'Enter') { event.preventDefault(); if (!$('#startFocusButton').disabled) startFocus(); }
     if (event.ctrlKey && event.key.toLowerCase() === 'k') { event.preventDefault(); showPage('board', 'Work Board'); setTimeout(() => $('#boardSearch').focus(), 50); }
@@ -731,7 +901,7 @@ async function init() {
   bindEvents();
   $('#dateLabel').textContent = new Intl.DateTimeFormat([], {weekday: 'long', month: 'long', day: 'numeric'}).format(new Date()).toUpperCase();
   const hash = location.hash.replace('#', '');
-  if (['command', 'board', 'sessions', 'recovery', 'settings'].includes(hash)) showPage(hash);
+  if (['command', 'board', 'sessions', 'recovery', 'settings', 'help'].includes(hash)) showPage(hash);
   await loadDashboard();
 }
 

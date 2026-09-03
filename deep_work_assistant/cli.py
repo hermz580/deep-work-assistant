@@ -12,10 +12,10 @@ from .engine import (
     DeepWorkAssistant,
     EngineEvent,
     ReminderPlan,
-    advance_streak,
     analyze_laptop_use,
     build_adaptive_plan,
     classify_sample,
+    effective_streak,
     format_plan,
     load_streak,
     save_streak,
@@ -37,6 +37,7 @@ from .pomodoro import PomodoroTimer, PomodoroConfig, PomodoroState, PomodoroSess
 from .mindfulness import MindfulnessCoach, MindfulnessType
 from .analytics import AnalyticsEngine, format_weekly_report, format_productivity_score, format_insights, format_trend
 from .git_integration import GitRepoWatcher, format_git_status
+from .diagnostics import collect_diagnostics
 
 
 def _positive_int(name: str, value: int) -> int:
@@ -92,6 +93,9 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument('--history', type=Path, default=HistoryStore.default().path)
 
     sub.add_parser('simulate', help='Run a dry-run scenario to verify the engine')
+
+    doctor = sub.add_parser('doctor', help='Check install, runtime, storage, and UI readiness')
+    doctor.add_argument('--json', action='store_true', help='Print the readiness report as JSON')
 
     # ── Vision lane ──
     vision_p = sub.add_parser('vision', help='Camera sensing (posture + motion)')
@@ -306,6 +310,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == 'simulate':
         return simulate_scenario()
+
+    if command == 'doctor':
+        diagnostics = collect_diagnostics()
+        if args.json:
+            import json
+            print(json.dumps(diagnostics, indent=2, ensure_ascii=False))
+        else:
+            print(f"Deep Work Assistant {diagnostics['version']} — {diagnostics['status']}")
+            print(f"Platform: {diagnostics['platform']}")
+            print(f"Python: {diagnostics['python']}")
+            print(
+                'Windows activity capture: '
+                f"{'ready' if diagnostics['windows_activity_capture'] else 'unavailable on this platform'}"
+            )
+            print(f"Local storage: {'ready' if diagnostics['checks']['storage_writable'] else 'blocked'}")
+            print(f"UI assets: {'ready' if diagnostics['checks']['ui_assets'] else 'missing'}")
+            print(
+                'Posture personalization: not implemented '
+                '(optional vision uses a generic, uncalibrated threshold)'
+            )
+        return 0
 
     # ── Kanban board ──
     if command == 'board':
@@ -823,7 +848,7 @@ def run_live_loop(
     recent = history.load_recent()
     plan = build_adaptive_plan(recent)
     laptop_profile = analyze_laptop_use(recent)
-    focus_streak = load_streak()
+    focus_streak = effective_streak(load_streak())
     board = KanbanBoard()
     active_card_id: str | None = None
 
@@ -889,9 +914,12 @@ def run_live_loop(
                 response = str(response_record.get('response', ''))
                 if not stage or not response:
                     continue
+                accepted = assistant.record_reminder_response(stage, response)
+                if not accepted:
+                    print(f'[deep-work-assistant] ignored unmatched reminder response: {stage} -> {response}')
+                    continue
                 skip_state = record_response(load_skip_state(), stage, response)
                 save_skip_state(skip_state)
-                assistant.record_reminder_response(stage, response)
                 print(f'[deep-work-assistant] reminder response: {stage} -> {response} '
                       f'(consecutive skips: {skip_state.get(stage, 0)})')
 
@@ -988,6 +1016,7 @@ def simulate_scenario() -> int:
         stop_streak_required=2,
         start_idle_threshold_seconds=180,
         stop_idle_threshold_seconds=900,
+        max_sample_gap_seconds=4 * 60 * 60,
     )
 
     base = datetime(2026, 6, 2, 9, 0, tzinfo=timezone.utc)
@@ -1068,10 +1097,9 @@ def _handle_events(
             recent = history.load_recent()
             assistant.reminder_plan = build_adaptive_plan(recent)
             assistant.laptop_use_profile = analyze_laptop_use(recent)
-            # Advance streak if session was meaningful
-            if session_summary.duration_seconds >= 600:
-                assistant.focus_streak = advance_streak(assistant.focus_streak)
-                save_streak(assistant.focus_streak)
+            # The engine owns streak eligibility and completion date. This
+            # handler only persists the already-updated state.
+            save_streak(assistant.focus_streak)
             # Log session time to Kanban board if active card
             if board and active_card_id and session_summary.duration_seconds >= 60:
                 board.log_card_session_time(active_card_id, session_summary.duration_seconds)
