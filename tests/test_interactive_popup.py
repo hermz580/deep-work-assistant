@@ -141,6 +141,7 @@ class TestPopupScript:
         assert 'skipped' in script
         assert 'timeout' in script
         assert 'r.jsonl' in script
+        assert "if not _done['written']" in script
         # Script must be valid Python.
         compile(script, '<popup>', 'exec')
 
@@ -156,4 +157,5 @@ class TestPopupScript:
         assert 'completed' in script
         assert 'skip' in script
         assert 'Neck Roll' in script
+        assert "if not _done['written']" in script
         compile(script, '<overlay>', 'exec')

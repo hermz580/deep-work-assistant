@@ -76,6 +76,13 @@ class TestBuildReminderMessage:
         texts = [build_reminder_message('hydration', streak_days=5, now=now) for _ in range(20)]
         assert any('streak' in msg.lower() or 'day' in msg.lower() for msg in texts)
 
+    def test_streak_copy_identifies_focus_streak(self):
+        now = datetime(2026, 6, 2, 14, 0, tzinfo=timezone.utc)
+        texts = [build_reminder_message('hydration', streak_days=5, now=now) for _ in range(40)]
+        streak_texts = [msg.lower() for msg in texts if 'streak' in msg.lower()]
+        assert streak_texts
+        assert any('focus streak' in msg or 'focused work' in msg or 'focus days' in msg for msg in streak_texts)
+
     def test_evening_message_is_evening_appropriate(self):
         now = datetime(2026, 6, 2, 20, 0, tzinfo=timezone.utc)
         msg = build_reminder_message('stretch', now=now)

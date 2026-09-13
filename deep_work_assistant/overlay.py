@@ -148,7 +148,8 @@ def tick():
 root.after(1000, tick)
 root.protocol('WM_DELETE_WINDOW', lambda: finish('overridden'))
 root.mainloop()
-write_response('completed')
+if not _done['written']:
+    write_response('completed')
 """.strip()
 
 

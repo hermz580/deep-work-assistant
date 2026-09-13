@@ -261,7 +261,8 @@ tk.Button(
 root.protocol('WM_DELETE_WINDOW', lambda: respond('skipped'))
 root.after(TIMEOUT_MS, lambda: respond('timeout'))
 root.mainloop()
-write_response('timeout')
+if not _done['written']:
+    write_response('timeout')
 """.strip()
 
 
