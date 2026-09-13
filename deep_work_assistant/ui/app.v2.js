@@ -176,8 +176,28 @@ function renderSystemStrip() {
     : `${String(data.profile.flow_style || data.profile.dominant_category).replaceAll('_', ' ')} · ${data.profile.confidence}`;
   const best = data.best_hours?.[0];
   $('#bestWindow').textContent = best ? `${String(best.hour).padStart(2, '0')}:00 · ${fmtMinutes(best.minutes)}` : 'No data';
-  const human = Math.round((data.activity_mix?.human_ratio || 0) * 100);
-  $('#systemMix').textContent = data.activity_mix?.human_seconds || data.activity_mix?.agent_seconds ? `${human}% human` : 'No data';
+  // ACTIVITY MIX: show BOTH clocks. agent_active_seconds used to be dropped
+  // here, so an agent-heavy day still read "100% human" and AI time was
+  // invisible in the dashboard even though it is recorded and logged.
+  const mix = data.activity_mix || {};
+  const humanSeconds = Number(mix.human_seconds || 0);
+  const agentSeconds = Number(mix.agent_seconds || 0);
+  if (humanSeconds || agentSeconds) {
+    const humanPct = Math.round(Number(mix.human_ratio || 0) * 100);
+    const agentPctRaw = Math.max(0, 100 - humanPct);
+    // Never round the agent clock away: a real 5-minute slice must not read
+    // as a flat 0%, or the AI side looks permanently broken.
+    let agentPctText;
+    if (agentSeconds === 0) agentPctText = '0%';
+    else if (agentPctRaw < 0.5) agentPctText = '<1%';
+    else agentPctText = `${Math.round(agentPctRaw)}%`;
+    const agentTime = fmtMinutes(agentSeconds / 60);
+    const total = fmtMinutes((humanSeconds + agentSeconds) / 60);
+    $('#systemMix').textContent =
+      `${humanPct}% you · ${agentPctText} AI (${agentTime}) · ${total} tracked`;
+  } else {
+    $('#systemMix').textContent = 'No data';
+  }
   $('#systemAssistant').textContent = data.assistant?.running ? `Running · PID ${data.assistant.pid}` : 'Stopped';
 }
 
