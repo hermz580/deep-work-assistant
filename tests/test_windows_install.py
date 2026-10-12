@@ -17,7 +17,7 @@ def test_scripts_are_ascii_so_windows_powershell_reads_them_right():
 
 def test_installer_downloads_this_repo_and_keeps_user_state():
     assert "hermz580/deep-work-assistant" in INSTALL
-    assert "/XD .venv" in INSTALL and "/XF local_config.bat" in INSTALL
+    assert "/XD .venv" in INSTALL and "$SourceDir" in INSTALL and "/XF local_config.bat" in INSTALL
     assert "--scope user" in INSTALL and "InstallAllUsers=0" in INSTALL   # never needs admin
     assert "-SetupOnly" in INSTALL and "-Python $python" in INSTALL
     assert '"/os"' in INSTALL                                             # a DWA OS shortcut

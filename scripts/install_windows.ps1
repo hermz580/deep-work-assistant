@@ -12,6 +12,7 @@
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "DeepWorkAssistant\app"),
     [string]$Branch = "main",
+    [string]$SourceDir = "",       # install from this local copy instead of downloading (CI, the .cmd)
     [switch]$StartAtLogin,
     [switch]$NoLaunch
 )
@@ -99,18 +100,28 @@ try {
     if (-not $python) { $python = Install-Python }
     Write-Host "    using $python"
 
-    Step "Downloading Deep Work Assistant ($Branch)"
     $work = Join-Path $env:TEMP ("dwa-install-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $work | Out-Null
-    $zip = Join-Path $work "dwa.zip"
-    Invoke-WebRequest -Uri "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip -UseBasicParsing
-    Expand-Archive -Path $zip -DestinationPath $work -Force
-    $source = Get-ChildItem -Path $work -Directory | Select-Object -First 1
-    if (-not $source) { throw "The download did not contain the app." }
+    if ($SourceDir) {
+        Step "Using the local copy in $SourceDir"
+        $source = Get-Item -LiteralPath $SourceDir
+    } else {
+        Step "Downloading Deep Work Assistant ($Branch)"
+        $zip = Join-Path $work "dwa.zip"
+        Invoke-WebRequest -Uri "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $work -Force
+        $source = Get-ChildItem -Path $work -Directory | Select-Object -First 1
+    }
+    if (-not $source -or -not (Test-Path (Join-Path $source.FullName "pyproject.toml"))) {
+        throw "No app files found to install."
+    }
+    if ((Resolve-Path $source.FullName).Path.TrimEnd("\") -eq [IO.Path]::GetFullPath($InstallDir).TrimEnd("\")) {
+        throw "The source and install folders are the same; run the launcher instead."
+    }
 
     Step "Copying files (your .venv and local_config.bat are kept)"
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    & robocopy.exe $source.FullName $InstallDir /E /NFL /NDL /NJH /NJS /NP /XD .venv /XF local_config.bat | Out-Null
+    & robocopy.exe $source.FullName $InstallDir /E /NFL /NDL /NJH /NJS /NP /XD .venv .git /XF local_config.bat | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Copying the app files failed (robocopy $LASTEXITCODE)." }
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 
@@ -144,6 +155,8 @@ try {
         Step "Opening the Command Center"
         Start-Process -FilePath (Join-Path $env:WINDIR "System32\wscript.exe") -ArgumentList ('"' + $launcher + '"')
     }
+    # robocopy leaves a non-zero "files copied" code behind; report success plainly
+    if ($MyInvocation.MyCommand.Path) { exit 0 }
 } catch {
     Write-Host ""
     Write-Host "Install failed: $($_.Exception.Message)" -ForegroundColor Red
