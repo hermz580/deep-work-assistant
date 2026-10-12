@@ -169,6 +169,7 @@ def _stage_question(stage: str) -> str:
         'hydration': '💧 Hydration time — did you drink water?',
         'stretch': '🧘 Stretch time — did you stretch?',
         'eat': '🍎 Meal time — did you eat something?',
+        'posture': '🪑 Posture check — did you sit back and reset?',
     }
     return questions.get(stage, f'⏰ Reminder — did you take care of it? ({stage})')
 
@@ -257,6 +258,13 @@ tk.Button(
     bg='#374151', fg='white', activebackground='#4B5563', activeforeground='white',
     relief='flat', padx=16, pady=8, command=lambda: respond('skipped'),
 ).pack(side='left', expand=True, fill='x')
+if STAGE == 'posture':
+    # Personal-baseline feedback: widens the alert threshold locally.
+    tk.Button(
+        buttons, text='🚫 Not accurate', font=('Segoe UI', 11),
+        bg='#7C2D12', fg='white', activebackground='#9A3412', activeforeground='white',
+        relief='flat', padx=12, pady=8, command=lambda: respond('inaccurate'),
+    ).pack(side='left', expand=True, fill='x', padx=(8, 0))
 
 root.protocol('WM_DELETE_WINDOW', lambda: respond('skipped'))
 root.after(TIMEOUT_MS, lambda: respond('timeout'))

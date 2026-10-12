@@ -924,7 +924,11 @@ def run_live_loop(
     desktop_notifier = DesktopNotifier(dry_run=dry_run)
     voice_notifier = VoiceNotifier(enabled=voice_enabled, dry_run=dry_run)
     notifier = ChainedNotifier(desktop_notifier, voice_notifier, pre_announce=voice_pre_announce)
-    probe = WindowsActivityProbe()
+    try:
+        probe = WindowsActivityProbe()
+    except RuntimeError as exc:
+        print(f'[deep-work-assistant] {exc}')
+        return 2
     recent = history.load_recent()
     plan = build_adaptive_plan(recent)
     laptop_profile = analyze_laptop_use(recent)
@@ -1014,6 +1018,9 @@ def run_live_loop(
                 response = str(response_record.get('response', ''))
                 if not stage or not response:
                     continue
+                if stage == 'posture':
+                    _handle_posture_response(response, vision_sampler)
+                    continue
                 accepted = assistant.record_reminder_response(stage, response)
                 if not accepted:
                     print(f'[deep-work-assistant] ignored unmatched reminder response: {stage} -> {response}')
@@ -1037,6 +1044,21 @@ def run_live_loop(
     finally:
         if vision_sampler is not None:
             vision_sampler.close()
+
+
+def _handle_posture_response(response: str, vision_sampler=None, store=None) -> None:
+    """Posture popup answers feed the personal baseline, not reminder outcomes."""
+    if response != 'inaccurate':
+        print(f'[deep-work-assistant] posture response: {response}')
+        return
+    from .body import BodyProfileStore
+
+    store = store or BodyProfileStore()
+    store.report_inaccurate()
+    threshold = store.threshold()
+    if vision_sampler is not None:
+        vision_sampler.sampler.posture_threshold = threshold
+    print(f'[deep-work-assistant] posture alert marked inaccurate; threshold now {threshold:g} deg')
 
 
 def _collect_vision_events(

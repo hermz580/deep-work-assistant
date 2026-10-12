@@ -210,7 +210,7 @@ def test_summary_reads_metrics_only_events(tmp_path: Path) -> None:
     assert summary["latest"]["cervical_load_lbs"] == cervical_load_lbs(24)
     assert summary["recent_alerts"] == 1
     assert len(summary["series"]) == 3
-    assert summary["camera"] == {"ready": False, "reason": "no camera"}
+    assert summary["camera"] == {"ready": False, "reason": "no camera", "step": "install"}
     assert summary["workstation"]["height_cm"] == 170.0
 
 
@@ -295,3 +295,118 @@ def test_os_shell_and_assets_are_served(server) -> None:
             assert response.headers["Content-Type"].startswith(kind)
     html = (Path(body.__file__).with_name("ui") / "os.html").read_text(encoding="utf-8")
     assert "https://" not in html  # the shell loads nothing from the network
+
+
+# ── Fully-functional wiring ────────────────────────────────────────
+
+def test_vision_readiness_names_the_next_step(monkeypatch, tmp_path: Path) -> None:
+    from deep_work_assistant import vision
+
+    monkeypatch.setattr(vision, "camera_available", lambda: (False, "opencv missing"))
+    assert vision.vision_readiness()["step"] == "install"
+    monkeypatch.setattr(vision, "camera_available", lambda: (True, ""))
+    monkeypatch.setattr(vision, "model_cache_dir", lambda: tmp_path)
+    assert vision.vision_readiness()["step"] == "provision"
+    (tmp_path / vision.POSE_MODEL_FILENAME).write_bytes(b"x" * 2000)
+    assert vision.vision_readiness()["step"] == "provision"  # wrong checksum
+    monkeypatch.setattr(vision, "POSE_MODEL_SHA256", vision._file_sha256(tmp_path / vision.POSE_MODEL_FILENAME))
+    vision._MODEL_CHECK_CACHE.clear()  # same file, new pin: a real download changes mtime instead
+    assert vision.vision_readiness() == {"ready": True, "libraries": True, "model": True, "step": None, "reason": ""}
+
+
+def test_ui_assistant_turns_posture_sampling_on_only_after_consent(monkeypatch, tmp_path: Path) -> None:
+    import subprocess
+    from deep_work_assistant import vision
+    from deep_work_assistant import web_ui_v2
+
+    launched = []
+
+    class FakeProcess:
+        pid = 4242
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **_: launched.append(command) or FakeProcess())
+    monkeypatch.setattr(vision, "vision_readiness", lambda: {"ready": True})
+    monkeypatch.setattr(web_ui_v2, "ASSISTANT_LOG_PATH", tmp_path / "log.txt")
+    store = BodyProfileStore(tmp_path / "body.json")
+    state = web_ui_v2.EnhancedAppState(web_ui_v2.SettingsStore(tmp_path / "s.json"), store)
+    state.log_path = tmp_path / "log.txt"
+
+    state.start_assistant({})
+    assert "--vision" not in launched[-1]
+    state.assistant_process = None
+
+    store.set_consent(True)
+    status = state.start_assistant({})
+    assert "--vision" in launched[-1]
+    assert status["posture_sampling"] is True
+    state._close_log()
+
+
+def test_provision_route_explains_missing_libraries(server, monkeypatch) -> None:
+    from deep_work_assistant import vision
+
+    monkeypatch.setattr(vision, "camera_available", lambda: (False, "opencv-python is not installed"))
+    url, _ = server
+    with pytest.raises(HTTPError) as refused:
+        _call(f"{url}/api/body/provision", "POST", {})
+    assert refused.value.code == 409
+
+
+def test_run_off_windows_exits_cleanly(capsys, monkeypatch, tmp_path: Path) -> None:
+    from deep_work_assistant import cli
+
+    class NoWindows:
+        def __init__(self):
+            raise RuntimeError("Live activity capture requires Windows.")
+
+    monkeypatch.setattr(cli, "WindowsActivityProbe", NoWindows)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main(["run", "--history", str(tmp_path / "h.jsonl"), "--no-hermes"]) == 2
+    assert "requires Windows" in capsys.readouterr().out
+
+
+def test_calibrate_route_reports_camera_faults_instead_of_dropping(server, monkeypatch) -> None:
+    from deep_work_assistant import body as body_module
+
+    def explode(*_, **__):
+        raise OSError("libEGL.so.1: cannot open shared object file")
+
+    monkeypatch.setattr(body_module, "run_calibration", explode)
+    import deep_work_assistant.web_ui_v2 as web
+    monkeypatch.setattr(web, "run_calibration", explode)
+    url, state = server
+    state.body_store.set_consent(True)
+    with pytest.raises(HTTPError) as fault:
+        _call(f"{url}/api/body/calibrate", "POST", {"samples": 5})
+    assert fault.value.code == 500
+    assert "libEGL" in json.loads(fault.value.read().decode())["error"]
+
+
+def test_posture_popup_offers_not_accurate_and_others_do_not() -> None:
+    from deep_work_assistant.interactive_popup import build_popup_script
+
+    posture = build_popup_script("posture", "Sit back")
+    assert "Not accurate" in posture and "respond('inaccurate')" in posture
+    compile(posture, "<popup>", "exec")
+    assert "Posture check" in posture
+    hydration = build_popup_script("hydration", "Drink")
+    compile(hydration, "<popup>", "exec")
+
+
+def test_inaccurate_popup_answer_widens_live_threshold(tmp_path: Path) -> None:
+    from deep_work_assistant import cli
+
+    store = BodyProfileStore(tmp_path / "body.json")
+    store.set_consent(True)
+    store.save_baseline(compute_baseline([_posture(10)] * 8))
+
+    class Live:
+        sampler = VisionSampler(check_fn=lambda **_: {}, posture_threshold=20.0)
+
+    cli._handle_posture_response("inaccurate", Live, store)
+    assert Live.sampler.posture_threshold == 23.0
+    assert store.load()["inaccurate_reports"] == 1
+    cli._handle_posture_response("confirmed", Live, store)
+    assert store.load()["inaccurate_reports"] == 1

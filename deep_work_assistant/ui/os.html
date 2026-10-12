@@ -114,6 +114,7 @@
           <p>Posture guidance uses your webcam for a moment at a time. Frames stay in memory and are discarded. Only angles are saved, on this machine. Nothing is uploaded.</p>
           <p class="muted" id="cameraReadiness"></p>
           <div class="row">
+            <button class="btn" id="provisionCamera" hidden>Download pose model (one-time, ~9 MB)</button>
             <button class="btn primary" id="consentGrant">I consent</button>
             <button class="btn danger" id="consentRevoke" hidden>Revoke and delete baseline</button>
           </div>

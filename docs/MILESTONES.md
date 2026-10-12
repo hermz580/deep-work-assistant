@@ -28,7 +28,8 @@ The release rule is simple: status follows acceptance evidence, not aspiration.
 - `body.py`: consent store, robust baseline (median + MAD), confidence label, personal threshold, inaccurate widening, revocation deletes baseline.
 - `VisionSampler` accepts a personal threshold; `run --vision` uses it when calibrated.
 - CLI: `vision consent`, `vision calibrate`, `vision baseline`. UI: DWA OS → Body.
-- Remaining: calibrate on real Windows hardware, record the confidence seen in practice, and route the posture reminder popup's "inaccurate" answer into the same store.
+- The posture popup offers **Not accurate**, which widens the personal threshold immediately, mid-session.
+- Remaining: calibrate on real Windows hardware and record the confidence seen in practice.
 
 ## What remains before M0 can be called complete
 

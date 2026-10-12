@@ -352,7 +352,7 @@ def body_summary(
     store: BodyProfileStore,
     *,
     events_path: Path = VISION_EVENTS_PATH,
-    readiness: tuple[bool, str] | None = None,
+    readiness: tuple[bool, str] | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Everything the Body app shows, assembled from local metrics only."""
     profile = store.load()
@@ -372,15 +372,24 @@ def body_summary(
         })
     latest = next((point for point in reversed(series) if point["fwd_head_deg"] is not None), None)
     if readiness is None:
-        from .vision import camera_available
-        readiness = camera_available()
+        from .vision import vision_readiness
+        readiness = vision_readiness()
+    if isinstance(readiness, tuple):  # (ready, reason) from callers and tests
+        readiness = {
+            "ready": bool(readiness[0]), "reason": readiness[1] or "",
+            "step": None if readiness[0] else "install",
+        }
     targets = None
     if profile["height_cm"]:
         targets = workstation_targets(profile["height_cm"], profile["workstation"])
     alerts = sum(1 for e in events if e.get("posture_alert") is True)
     return {
         "consent": profile["consent"],
-        "camera": {"ready": bool(readiness[0]), "reason": readiness[1] or None},
+        "camera": {
+            "ready": bool(readiness.get("ready")),
+            "reason": readiness.get("reason") or None,
+            "step": readiness.get("step"),
+        },
         "baseline": baseline,
         "calibrated": baseline is not None,
         "threshold_deg": threshold,
