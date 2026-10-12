@@ -316,6 +316,8 @@ class ActiveSession:
     inactive_streak: int = 0
     human_active_seconds: int = 0
     agent_active_seconds: int = 0
+    together_seconds: int = 0
+    agent_work: dict[str, int] = field(default_factory=dict)
     reminders: list[ReminderRecord] = field(default_factory=list)
 
 
@@ -333,6 +335,12 @@ class SessionSummary:
     agent_active_seconds: int = 0
     agent_dominated: bool = False
     reminder_outcomes: list[dict[str, Any]] = field(default_factory=list)
+    # Attribution ledger. human_active_seconds is all hands-on time (yours);
+    # agent_active_seconds is the agent working with no human input;
+    # together_seconds is the part of your time when an agent worked too.
+    # agent_work maps who/what ("hermes:terminal", "other-agent") to seconds.
+    together_seconds: int = 0
+    agent_work: dict[str, int] = field(default_factory=dict)
 
     def to_record(self) -> dict[str, Any]:
         return {
@@ -348,6 +356,8 @@ class SessionSummary:
             'agent_active_seconds': self.agent_active_seconds,
             'agent_dominated': self.agent_dominated,
             'reminder_outcomes': self.reminder_outcomes,
+            'together_seconds': self.together_seconds,
+            'agent_work': dict(self.agent_work),
         }
 
     @classmethod
@@ -365,6 +375,11 @@ class SessionSummary:
             agent_active_seconds=int(record.get('agent_active_seconds', 0)),
             agent_dominated=bool(record.get('agent_dominated', False)),
             reminder_outcomes=list(record.get('reminder_outcomes', [])),
+            together_seconds=int(record.get('together_seconds', 0)),
+            agent_work={
+                str(k): int(v) for k, v in (record.get('agent_work') or {}).items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            },
         )
 
 
@@ -502,6 +517,7 @@ class DeepWorkAssistant:
         session_id_factory: Any | None = None,
         voice_enabled: bool = False,
         max_sample_gap_seconds: int = MAX_SAMPLE_GAP_SECONDS,
+        agent_evidence: Any | None = None,
     ) -> None:
         self.reminder_plan = reminder_plan or (laptop_use_profile.suggested_plan if laptop_use_profile else ReminderPlan(*DEFAULT_REMINDER_PLAN))
         self.laptop_use_profile = laptop_use_profile or LaptopUseProfile(suggested_plan=self.reminder_plan)
@@ -514,6 +530,10 @@ class DeepWorkAssistant:
         self.response_window_minutes = int(response_window_minutes)
         self.session_id_factory = session_id_factory or (lambda: f'dwa-{uuid4().hex[:8]}')
         self.max_sample_gap_seconds = max(1, int(max_sample_gap_seconds))
+        # Optional (start, end) -> {category: seconds} from a signed agent log
+        # (Hermes). It attributes agent work; it can never turn human input
+        # into agent time or credit agent time to the human.
+        self.agent_evidence = agent_evidence
 
         self.current_session: ActiveSession | None = None
         self.latest_vision_observation: dict[str, Any] | None = None
@@ -567,12 +587,21 @@ class DeepWorkAssistant:
             session = self.current_session
             elapsed = max(0, int((sample.captured_at - session.last_sample_at).total_seconds()))
             classification = classify_sample(self._previous_sample, sample)
+            hermes_work = self._agent_work(session.last_sample_at, sample.captured_at, elapsed)
+            if classification == 'idle' and hermes_work:
+                classification = 'agent-active'
             if classification == 'human-active':
                 session.human_active_seconds += elapsed
                 session.focus_sample_count += 1
                 session.last_human_active_at = sample.captured_at
+                if hermes_work:
+                    session.together_seconds += elapsed
             elif classification == 'agent-active':
                 session.agent_active_seconds += elapsed
+                if not hermes_work:
+                    hermes_work = {'other-agent': elapsed}
+            for who, seconds in hermes_work.items():
+                session.agent_work[who] = session.agent_work.get(who, 0) + seconds
             session.last_sample_at = sample.captured_at
             session.sample_count += 1
             session.idle_total_seconds += max(0, int(sample.idle_seconds))
@@ -627,6 +656,24 @@ class DeepWorkAssistant:
 
         self._previous_sample = sample
         return events
+
+    def _agent_work(self, start: datetime, end: datetime, elapsed: int) -> dict[str, int]:
+        """Agent work in this interval as {who: seconds}, when it filled most of it."""
+        if self.agent_evidence is None or elapsed <= 0:
+            return {}
+        try:
+            breakdown = self.agent_evidence(start, end) or {}
+            busy = sum(float(v) for v in breakdown.values())
+        except Exception:
+            # A broken agent log must never break focus tracking.
+            return {}
+        if busy < elapsed * 0.5:
+            return {}
+        scale = elapsed / busy if busy > elapsed else 1.0
+        return {
+            f'hermes:{who}': int(round(float(seconds) * scale))
+            for who, seconds in breakdown.items() if float(seconds) > 0
+        }
 
     def record_vision_observation(self, observation: dict[str, Any]) -> list[EngineEvent]:
         """Feed a local-only vision metric record into the health engine.
@@ -756,6 +803,8 @@ class DeepWorkAssistant:
             agent_active_seconds=session.agent_active_seconds,
             agent_dominated=agent_dominated,
             reminder_outcomes=reminder_outcomes,
+            together_seconds=session.together_seconds,
+            agent_work=dict(session.agent_work),
         )
 
         self.current_session = None

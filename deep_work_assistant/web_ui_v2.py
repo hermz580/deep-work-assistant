@@ -24,6 +24,7 @@ from urllib.request import urlopen
 
 from .body import BodyProfileStore, body_summary, run_calibration
 from .diagnostics import collect_diagnostics
+from .hermes_bridge import HermesBridge
 from .history import HistoryStore
 from .kanban import KanbanBoard
 from .web_ui import (
@@ -136,8 +137,10 @@ class EnhancedAppState(AppState):
         self,
         settings: SettingsStore | None = None,
         body: BodyProfileStore | None = None,
+        hermes: HermesBridge | None = None,
     ) -> None:
         super().__init__()
+        self.hermes = hermes or HermesBridge()
         self.settings_store = settings or SettingsStore()
         self.body_store = body or BodyProfileStore()
         self.calibration_lock = threading.Lock()
@@ -266,6 +269,9 @@ class EnhancedHandler(CommandCenterHandler):
         if path == "/api/body":
             self._send_json(body_summary(self.enhanced_state.body_store))
             return
+        if path == "/api/attribution":
+            self._send_json(self._attribution_payload())
+            return
         if path == "/api/diagnostics":
             self._send_json(self._diagnostics_payload())
             return
@@ -370,6 +376,7 @@ class EnhancedHandler(CommandCenterHandler):
                 "settings": self.enhanced_state.settings_store.load(),
                 "diagnostics": self._diagnostics_payload(),
                 "assistant": self.enhanced_state.assistant_status(),
+                "attribution": self._attribution_payload(sessions),
                 "session_summary": {
                     "visible_count": len(sessions),
                     "visible_seconds": total_seconds,
@@ -402,6 +409,27 @@ class EnhancedHandler(CommandCenterHandler):
             self.wfile.write(content)
             return
         super()._serve_static(request_path)
+
+    def _attribution_payload(self, sessions: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Who did the work: you alone, the AI alone, or both at once."""
+        if sessions is None:
+            sessions = self._all_sessions()[-20:]
+        human = sum(int(s.get("human_active_seconds") or 0) for s in sessions)
+        together = sum(int(s.get("together_seconds") or 0) for s in sessions)
+        agent = sum(int(s.get("agent_active_seconds") or 0) for s in sessions)
+        work: dict[str, int] = {}
+        for session in sessions:
+            for who, seconds in (session.get("agent_work") or {}).items():
+                if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+                    work[str(who)] = work.get(str(who), 0) + int(seconds)
+        return {
+            "you_alone_seconds": max(0, human - together),
+            "together_seconds": together,
+            "ai_alone_seconds": agent,
+            "credited_to_you_seconds": human,
+            "agent_work": dict(sorted(work.items(), key=lambda item: -item[1])),
+            "hermes": self.enhanced_state.hermes.status(),
+        }
 
     def _diagnostics_payload(self) -> dict[str, Any]:
         return collect_diagnostics(

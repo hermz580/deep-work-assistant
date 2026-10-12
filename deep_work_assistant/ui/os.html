@@ -224,10 +224,20 @@
           <div><p class="kicker">What actually happened</p><h1 id="evidenceTitle">Evidence</h1></div>
           <a class="btn" href="/api/export/sessions">Export sessions</a>
         </div>
+        <article class="card" aria-labelledby="whoTitle">
+          <div class="row-between"><h3 id="whoTitle">Who did the work</h3><span class="tag" id="hermesTag">Hermes: checking</span></div>
+          <div class="who-bar" id="whoBar" role="img" aria-label="Time split between you, both, and the AI"></div>
+          <dl class="facts who-legend" id="whoFacts"></dl>
+          <p class="muted small">Only <b>your</b> hands-on time counts toward focus, streaks and reminders. "Both" is time you worked while an AI agent worked too. "AI alone" is agent work with no human input.</p>
+          <div class="split thin">
+            <div><h3>What the AI did</h3><dl class="facts" id="agentWork"></dl></div>
+            <div><h3>Hermes right now</h3><ul class="insights" id="hermesFeed"></ul></div>
+          </div>
+        </article>
         <article class="card"><h3>Insights</h3><ul class="insights" id="insights"></ul></article>
         <article class="card">
           <h3>Recent sessions</h3>
-          <div class="table-wrap"><table><thead><tr><th>Started</th><th>App</th><th>Length</th><th>Human</th><th>Agent</th><th>Ended</th></tr></thead><tbody id="sessionRows"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Started</th><th>App</th><th>Length</th><th>You alone</th><th>Both</th><th>AI alone</th><th>Ended</th></tr></thead><tbody id="sessionRows"></tbody></table></div>
         </article>
       </section>
 

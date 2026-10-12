@@ -141,6 +141,7 @@
       ["Assistant", dash.assistant?.running ? "watching" : "stopped"],
       ["Camera path", body.camera.ready ? "ready" : "not installed"],
       ["Posture consent", body.consent.granted ? "granted" : "not granted"],
+      ["Hermes agent", dash.attribution?.hermes?.connected ? dash.attribution.hermes.state : "not connected"],
       ["Human / agent", dash.activity_mix?.human_seconds || dash.activity_mix?.agent_seconds
         ? `${Math.round((dash.activity_mix.human_ratio || 0) * 100)}% / ${Math.round((dash.activity_mix.agent_ratio || 0) * 100)}%` : "no data"],
     ]);
@@ -430,11 +431,47 @@
   function renderEvidence() {
     const insights = state.dash.insights || [];
     $("insights").replaceChildren(...(insights.length ? insights : ["No insights yet — they appear after real sessions."]).map((t) => el("li", {}, t)));
+    renderAttribution(state.dash.attribution);
     const sessions = state.dash.recent_sessions || [];
     $("sessionRows").replaceChildren(...(sessions.length
       ? sessions.map((s) => el("tr", {}, el("td", {}, when(s.started_at)), el("td", {}, s.primary_app || "—"), el("td", {}, minutes(s.duration_seconds)),
-        el("td", {}, minutes(s.human_active_seconds)), el("td", {}, minutes(s.agent_active_seconds)), el("td", {}, s.ended_reason || "—")))
-      : [el("tr", {}, el("td", { colspan: "6", class: "muted" }, "No completed sessions yet."))]));
+        el("td", {}, minutes((s.human_active_seconds || 0) - (s.together_seconds || 0))), el("td", {}, minutes(s.together_seconds)), el("td", {}, minutes(s.agent_active_seconds)), el("td", {}, s.ended_reason || "—")))
+      : [el("tr", {}, el("td", { colspan: "7", class: "muted" }, "No completed sessions yet."))]));
+  }
+
+  const WHO_LABEL = (who) => {
+    if (who === "other-agent") return "Other agent (window changes, no input)";
+    const [source, category] = who.split(":");
+    return source === "hermes" ? `Hermes · ${category}` : who;
+  };
+  function renderAttribution(a) {
+    if (!a) return;
+    const alone = a.you_alone_seconds || 0, both = a.together_seconds || 0, ai = a.ai_alone_seconds || 0;
+    const total = alone + both + ai;
+    const seg = (cls, value, label) => {
+      const span = el("span", { class: cls, title: `${label}: ${minutes(value)}` });
+      span.style.width = total ? `${(value / total) * 100}%` : "0";
+      return span;
+    };
+    $("whoBar").replaceChildren(seg("who-you", alone, "You alone"), seg("who-both", both, "Both at once"), seg("who-ai", ai, "AI alone"));
+    const dl = $("whoFacts");
+    const row = (cls, label, value) => [el("dt", { class: cls }, label), el("dd", {}, value)];
+    dl.replaceChildren(
+      ...row("who-you", "You alone", minutes(alone)),
+      ...row("who-both", "Both at once", minutes(both)),
+      ...row("who-ai", "AI alone", minutes(ai)),
+      el("dt", {}, "Credited to you"), el("dd", {}, minutes(a.credited_to_you_seconds)),
+    );
+    const work = Object.entries(a.agent_work || {});
+    facts("agentWork", work.length ? work.map(([who, s]) => [WHO_LABEL(who), minutes(s)]) : [["No agent work recorded", ""]]);
+    const h = a.hermes || {};
+    const tag = $("hermesTag");
+    tag.textContent = h.connected ? `Hermes: ${h.state}` : "Hermes: not connected";
+    tag.className = `tag ${h.connected && h.state === "working" ? "drifting" : h.connected ? "neutral" : ""}`;
+    const feed = (h.recent || []).slice(0, 6);
+    $("hermesFeed").replaceChildren(...(feed.length
+      ? feed.map((e) => el("li", {}, `${when(e.at)} · ${e.kind.replace(/[._]/g, " ")}${e.category && e.category !== "general" ? ` (${e.category})` : ""}`))
+      : [el("li", { class: "muted" }, h.connected ? "No signed events yet." : "Install the Hermes Companion plugin to attribute agent work exactly.")]));
   }
 
   // ── system ───────────────────────────────────────────────

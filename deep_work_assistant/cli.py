@@ -88,6 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help='Seconds between camera probes while human-active (default: 60)')
     run.add_argument('--vision-frame-interval', type=_vision_frame_interval, default=0.4,
                      help='Seconds between in-memory motion frames (default: 0.4)')
+    run.add_argument('--no-hermes', action='store_true',
+                     help="Ignore the Hermes agent's signed event log when attributing time")
 
     plan = sub.add_parser('plan', help='Print the current adaptive reminder plan')
     plan.add_argument('--history', type=Path, default=HistoryStore.default().path)
@@ -450,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
         vision_enabled=args.vision,
         vision_sample_interval=args.vision_sample_interval,
         vision_frame_interval=args.vision_frame_interval,
+        hermes_enabled=not args.no_hermes,
     )
 
 
@@ -916,6 +919,7 @@ def run_live_loop(
     vision_enabled: bool = False,
     vision_sample_interval: float = 60.0,
     vision_frame_interval: float = 0.4,
+    hermes_enabled: bool = True,
 ) -> int:
     desktop_notifier = DesktopNotifier(dry_run=dry_run)
     voice_notifier = VoiceNotifier(enabled=voice_enabled, dry_run=dry_run)
@@ -939,6 +943,18 @@ def run_live_loop(
         stop_idle_threshold_seconds=stop_idle_threshold,
         response_window_minutes=response_window,
     )
+
+    if hermes_enabled:
+        from .hermes_bridge import HermesBridge
+
+        hermes = HermesBridge()
+        if hermes.connected():
+            assistant.agent_evidence = hermes.work_between
+            print(f'[deep-work-assistant] hermes agent log: {hermes.events_path} '
+                  '(signed; agent time is attributed, never credited to you)')
+        else:
+            print('[deep-work-assistant] hermes agent log: not found '
+                  '(agent time falls back to window-change detection)')
 
     vision_sampler = None
     if vision_enabled:
