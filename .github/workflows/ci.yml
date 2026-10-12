@@ -37,10 +37,10 @@ jobs:
     defaults:
       run:
         shell: powershell
-    env:
-      DWA_DIR: ${{ runner.temp }}\dwa-app
     steps:
       - uses: actions/checkout@v4
+      - name: Pick a clean install folder
+        run: '"DWA_DIR=$env:RUNNER_TEMP\dwa-app" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii'
       - name: Install with the one-line installer (from this checkout)
         run: |
           .\scripts\install_windows.ps1 -SourceDir $PWD -InstallDir $env:DWA_DIR -NoLaunch
