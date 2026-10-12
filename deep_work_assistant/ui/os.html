@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>DWA OS</title>
+  <link rel="stylesheet" href="/os.css">
+</head>
+<body>
+  <div class="os">
+    <header class="pulse" aria-label="System pulse">
+      <div class="pulse-brand">
+        <span class="mark" aria-hidden="true"></span>
+        <div><strong>DWA OS</strong><small>healthier · more focused</small></div>
+      </div>
+      <ol class="loop" aria-label="Sense, model, act">
+        <li><span class="dot" id="pulseSense"></span><b>Sense</b><em id="pulseSenseText">checking</em></li>
+        <li><span class="dot" id="pulseModel"></span><b>Model</b><em id="pulseModelText">checking</em></li>
+        <li><span class="dot" id="pulseAct"></span><b>Act</b><em id="pulseActText">checking</em></li>
+      </ol>
+      <div class="pulse-right">
+        <span class="clock" id="clock">--:--</span>
+        <span class="link-state" id="linkState" role="status">connecting</span>
+      </div>
+    </header>
+
+    <nav class="dock" aria-label="Apps">
+      <button class="app active" data-app="today" aria-keyshortcuts="1"><i aria-hidden="true">◎</i><span>Today</span></button>
+      <button class="app" data-app="focus" aria-keyshortcuts="2"><i aria-hidden="true">◴</i><span>Focus</span></button>
+      <button class="app" data-app="body" aria-keyshortcuts="3"><i aria-hidden="true">⌖</i><span>Body</span></button>
+      <button class="app" data-app="board" aria-keyshortcuts="4"><i aria-hidden="true">▤</i><span>Board</span></button>
+      <button class="app" data-app="recover" aria-keyshortcuts="5"><i aria-hidden="true">◇</i><span>Recover</span></button>
+      <button class="app" data-app="evidence" aria-keyshortcuts="6"><i aria-hidden="true">≋</i><span>Evidence</span></button>
+      <button class="app" data-app="system" aria-keyshortcuts="7"><i aria-hidden="true">⚙</i><span>System</span></button>
+    </nav>
+
+    <main class="stage">
+      <!-- TODAY -->
+      <section class="screen active" id="today" aria-labelledby="todayTitle">
+        <div class="screen-head">
+          <p class="kicker" id="todayDate">Today</p>
+          <h1 id="todayTitle">Your body and your work, right now</h1>
+        </div>
+        <article class="next card accent" aria-live="polite">
+          <p class="kicker">Next right action</p>
+          <h2 id="nextTitle">Loading…</h2>
+          <p id="nextBody"></p>
+          <button class="btn primary" id="nextButton" hidden></button>
+        </article>
+        <div class="triad">
+          <article class="card">
+            <p class="kicker">Sense</p>
+            <h3>What DWA can observe</h3>
+            <dl class="facts" id="senseFacts"></dl>
+          </article>
+          <article class="card">
+            <p class="kicker">Model</p>
+            <h3>What it has learned</h3>
+            <dl class="facts" id="modelFacts"></dl>
+          </article>
+          <article class="card">
+            <p class="kicker">Act</p>
+            <h3>How it will help</h3>
+            <dl class="facts" id="actFacts"></dl>
+          </article>
+        </div>
+        <article class="card">
+          <div class="row-between"><h3>Focus, last 14 days</h3><small id="weekLine"></small></div>
+          <div class="bars" id="trendBars" role="img" aria-label="Daily focus minutes, last 14 days"></div>
+        </article>
+      </section>
+
+      <!-- FOCUS -->
+      <section class="screen" id="focus" aria-labelledby="focusTitle">
+        <div class="screen-head"><p class="kicker">Manual timer</p><h1 id="focusTitle">Focus</h1></div>
+        <div class="split">
+          <article class="card center">
+            <div class="ring" id="focusRing">
+              <svg viewBox="0 0 200 200" aria-hidden="true"><circle class="ring-track" cx="100" cy="100" r="88"/><circle class="ring-fill" id="ringFill" cx="100" cy="100" r="88"/></svg>
+              <div class="ring-core"><strong id="timerValue">--:--</strong><span id="timerPhase">ready</span></div>
+            </div>
+            <div class="pills" role="group" aria-label="Focus length">
+              <button class="pill" data-minutes="25">25m</button><button class="pill active" data-minutes="50">50m</button><button class="pill" data-minutes="90">90m</button>
+            </div>
+            <select id="focusCard" aria-label="Link this focus block to a card"><option value="">No linked card</option></select>
+            <div class="row">
+              <button class="btn primary" id="focusStart">Begin focus</button>
+              <button class="btn" id="focusPause" disabled>Pause</button>
+              <button class="btn" id="focusNext" disabled>Next phase</button>
+              <button class="btn danger" id="focusStop" disabled>Stop</button>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Two engines, stated plainly</h3>
+            <p><b>Begin focus</b> runs this manual work/break timer.</p>
+            <p><b>Start assistant</b> (System) watches real Windows activity, pauses during idle or agent time, and owns hydration, stretch, meal, and posture reminders.</p>
+            <p class="muted">They run side by side. They do not share one session yet; that is milestone M1.</p>
+            <h3>Reminder plan</h3>
+            <dl class="facts" id="planFacts"></dl>
+          </article>
+        </div>
+      </section>
+
+      <!-- BODY -->
+      <section class="screen" id="body" aria-labelledby="bodyTitle">
+        <div class="screen-head"><p class="kicker">Camera helper · local only</p><h1 id="bodyTitle">Body</h1></div>
+        <ol class="steps" id="bodySteps" aria-label="Setup progress">
+          <li data-step="consent">Consent</li><li data-step="frame">Frame</li><li data-step="calibrate">Calibrate</li><li data-step="live">Live</li>
+        </ol>
+
+        <article class="card" id="consentCard">
+          <h3>1 · Consent</h3>
+          <p>Posture guidance uses your webcam for a moment at a time. Frames stay in memory and are discarded. Only angles are saved, on this machine. Nothing is uploaded.</p>
+          <p class="muted" id="cameraReadiness"></p>
+          <div class="row">
+            <button class="btn primary" id="consentGrant">I consent</button>
+            <button class="btn danger" id="consentRevoke" hidden>Revoke and delete baseline</button>
+          </div>
+        </article>
+
+        <div class="split">
+          <article class="card" id="frameCard">
+            <h3>2 · Frame yourself</h3>
+            <p>Put the camera at eye level, about an arm's length away. Ears and both shoulders must be in the frame. This preview never leaves your browser.</p>
+            <div class="viewfinder" id="viewfinder">
+              <video id="preview" playsinline muted></video>
+              <div class="guide" aria-hidden="true"><span class="guide-head"></span><span class="guide-shoulders"></span><span class="guide-horizon"></span></div>
+              <p class="vf-empty" id="vfEmpty">Preview off</p>
+            </div>
+            <div class="row">
+              <button class="btn" id="previewToggle">Start preview</button>
+            </div>
+          </article>
+
+          <article class="card" id="calibrateCard">
+            <h3>3 · Calibrate</h3>
+            <p>Sit back in your comfortable, upright working posture and hold it while DWA takes 8 local samples (about 20 seconds). That becomes <em>your</em> neutral, instead of a generic number.</p>
+            <dl class="facts" id="baselineFacts"></dl>
+            <div class="row">
+              <button class="btn primary" id="calibrate">Calibrate now</button>
+              <button class="btn" id="clearBaseline" hidden>Reset baseline</button>
+            </div>
+            <p class="status-line" id="calibrateStatus" role="status"></p>
+          </article>
+        </div>
+
+        <article class="card" id="liveCard">
+          <div class="row-between">
+            <h3>4 · Live posture</h3>
+            <span class="tag" id="postureTag">no reading</span>
+          </div>
+          <div class="split thin">
+            <div>
+              <div class="gauge" aria-live="polite">
+                <strong id="loadValue">—</strong><span>estimated head load (lbs)</span>
+              </div>
+              <p class="muted" id="loadNote">Estimate from a forward-head proxy (Hansraj curve). Motivation, not diagnosis.</p>
+              <button class="btn" id="inaccurate">That alert was wrong</button>
+              <p class="muted small" id="inaccurateNote"></p>
+            </div>
+            <div>
+              <svg class="chart" id="postureChart" viewBox="0 0 400 140" role="img" aria-label="Recent forward-head angle against your threshold"></svg>
+              <p class="muted small">Samples arrive while <b>Start assistant</b> runs with vision on (<code>run --vision</code>), once a minute during human-active work.</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card" id="deskCard">
+          <h3>Workstation</h3>
+          <form class="row" id="deskForm">
+            <label>Height <input type="number" id="heightInput" min="120" max="230" step="0.5" placeholder="cm" required></label>
+            <label>Setup
+              <select id="workstationInput">
+                <option value="laptop">Laptop</option>
+                <option value="external_monitor">External monitor</option>
+                <option value="dual_monitor">Dual monitor</option>
+                <option value="standing_desk">Standing desk</option>
+              </select>
+            </label>
+            <button class="btn" type="submit">Save</button>
+          </form>
+          <div class="desk" id="deskTargets"></div>
+        </article>
+      </section>
+
+      <!-- BOARD -->
+      <section class="screen" id="board" aria-labelledby="boardTitle">
+        <div class="screen-head row-between">
+          <div><p class="kicker">Local SQLite board</p><h1 id="boardTitle">Board</h1></div>
+          <form class="row" id="cardForm"><input id="cardTitle" placeholder="New card" aria-label="New card title" required><button class="btn primary">Add</button></form>
+        </div>
+        <div class="columns" id="columns"></div>
+      </section>
+
+      <!-- RECOVER -->
+      <section class="screen" id="recover" aria-labelledby="recoverTitle">
+        <div class="screen-head"><p class="kicker">Reset the nervous system</p><h1 id="recoverTitle">Recover</h1></div>
+        <div class="split">
+          <article class="card center">
+            <div class="breath" id="breath"><span id="breathCue">Ready</span></div>
+            <div class="pills" role="group" aria-label="Breathing length">
+              <button class="pill active" data-breath="2">2 min</button><button class="pill" data-breath="5">5 min</button>
+            </div>
+            <button class="btn primary" id="breathStart">Start box breathing</button>
+            <p class="muted small">In 4 · hold 4 · out 4 · hold 4</p>
+          </article>
+          <article class="card">
+            <h3>Desk reset (60 seconds)</h3>
+            <ol class="routine">
+              <li><b>Chin tuck</b> — glide your head straight back, hold 5 s, × 5.</li>
+              <li><b>Shoulder blades</b> — squeeze back and down, hold 5 s, × 5.</li>
+              <li><b>Doorway open</b> — hands behind head, elbows wide, 3 slow breaths.</li>
+              <li><b>Stand</b> — look at something 6 m away for 20 s.</li>
+            </ol>
+            <p class="muted small">General movement suggestions, not medical advice. Stop if anything hurts.</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- EVIDENCE -->
+      <section class="screen" id="evidence" aria-labelledby="evidenceTitle">
+        <div class="screen-head row-between">
+          <div><p class="kicker">What actually happened</p><h1 id="evidenceTitle">Evidence</h1></div>
+          <a class="btn" href="/api/export/sessions">Export sessions</a>
+        </div>
+        <article class="card" aria-labelledby="whoTitle">
+          <div class="row-between"><h3 id="whoTitle">Who did the work</h3><span class="tag" id="hermesTag">Hermes: checking</span></div>
+          <div class="who-bar" id="whoBar" role="img" aria-label="Time split between you, both, and the AI"></div>
+          <dl class="facts who-legend" id="whoFacts"></dl>
+          <p class="muted small">Only <b>your</b> hands-on time counts toward focus, streaks and reminders. "Both" is time you worked while an AI agent worked too. "AI alone" is agent work with no human input.</p>
+          <div class="split thin">
+            <div><h3>What the AI did</h3><dl class="facts" id="agentWork"></dl></div>
+            <div><h3>Hermes right now</h3><ul class="insights" id="hermesFeed"></ul></div>
+          </div>
+        </article>
+        <article class="card"><h3>Insights</h3><ul class="insights" id="insights"></ul></article>
+        <article class="card">
+          <h3>Recent sessions</h3>
+          <div class="table-wrap"><table><thead><tr><th>Started</th><th>App</th><th>Length</th><th>You alone</th><th>Both</th><th>AI alone</th><th>Ended</th></tr></thead><tbody id="sessionRows"></tbody></table></div>
+        </article>
+      </section>
+
+      <!-- SYSTEM -->
+      <section class="screen" id="system" aria-labelledby="systemTitle">
+        <div class="screen-head"><p class="kicker">Readiness and control</p><h1 id="systemTitle">System</h1></div>
+        <div class="split">
+          <article class="card">
+            <h3>Assistant</h3>
+            <p id="assistantLine">Stopped</p>
+            <div class="row"><button class="btn primary" id="assistantToggle">Start assistant</button></div>
+            <pre class="log" id="assistantLog" aria-label="Assistant log"></pre>
+          </article>
+          <article class="card">
+            <h3>Diagnostics</h3>
+            <dl class="facts" id="diagFacts"></dl>
+            <p><a href="/">Open the classic Command Center</a></p>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/os.js"></script>
+</body>
+</html>

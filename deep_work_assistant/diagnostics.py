@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .body import BodyProfileStore
 from .history import HistoryStore
 from .kanban import KanbanBoard
 
 
 DATA_DIR = Path.home() / ".deep_work_assistant"
 UI_DIR = Path(__file__).with_name("ui")
-REQUIRED_UI_ASSETS = ("index.html", "app.css", "app.v2.css", "app.v2.js")
+REQUIRED_UI_ASSETS = ("index.html", "app.css", "app.v2.css", "app.v2.js", "os.html", "os.css", "os.js")
 
 
 def _path_status(path: Path) -> dict[str, Any]:
@@ -103,6 +104,15 @@ def collect_diagnostics(
         name: (UI_DIR / name).is_file()
         for name in REQUIRED_UI_ASSETS
     }
+    body_profile = BodyProfileStore().load()
+    body_consented = body_profile["consent"]["granted"]
+    body_baseline = body_profile["baseline"] if body_consented else None
+    if body_baseline:
+        personalization = f"calibrated ({body_baseline.get('confidence')} confidence)"
+    elif body_consented:
+        personalization = "consented, not calibrated"
+    else:
+        personalization = "off (generic threshold)"
     storage_ready = all(item["writable"] for item in paths.values())
     ui_ready = all(ui_assets.values())
     live_ready = windows_native and psutil_ready and storage_ready and ui_ready
@@ -134,12 +144,13 @@ def collect_diagnostics(
         "assistant": assistant or {"running": False},
         "learning": {
             "work_patterns": "session-history based",
-            "posture_personalization": "not implemented",
+            "posture_personalization": personalization,
         },
         "vision": {
             "installed": mediapipe_ready and opencv_ready,
             "opt_in_required": True,
             "raw_frames_persisted": False,
-            "personal_posture_baseline": False,
+            "consent_granted": body_consented,
+            "personal_posture_baseline": body_baseline is not None,
         },
     }

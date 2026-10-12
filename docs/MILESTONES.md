@@ -6,7 +6,7 @@ The release rule is simple: status follows acceptance evidence, not aspiration.
 |---|---|---|---|
 | M0 — Boot Truth | In progress | A clean Windows checkout installs and opens one canonical v2 interface without a persistent terminal. | Clone → silent bootstrap → doctor → health → every referenced asset returns 200 → relaunch reuses server. |
 | M1 — State Truth | In progress | One focus identity produces accurate sessions, streaks, outcomes, and card time exactly once. | One runtime coordinator; duplicate assistant lock; automatic/manual focus identity joined; correlated reminder events; restart tests. |
-| M2 — Embodied Truth | Planned | Posture guidance begins from consent, calibration, confidence, and local metrics—not assumptions. | Vision provisioned; neutral baseline calibrated; inaccurate action supported; no raw-frame persistence; confidence visible. |
+| M2 — Embodied Truth | In progress | Posture guidance begins from consent, calibration, confidence, and local metrics—not assumptions. | Vision provisioned; neutral baseline calibrated; inaccurate action supported; no raw-frame persistence; confidence visible. |
 | M3 — Guided Recovery | Planned | Confirm, snooze, skip, inaccurate, escalation, and return-to-task form one adaptive recovery loop. | Response ladder and exact return state tested through multiple sessions. |
 | M4 — Release Truth | In progress | A contributor can pull, verify, understand, and report a problem without reverse-engineering the project. | Linux + Windows CI, packaged wheel smoke, version consistency, tutorial, FAQ, sanitized support-note flow. |
 
@@ -22,6 +22,13 @@ The release rule is simple: status follows acceptance evidence, not aspiration.
 - Explicit reminder outcomes participate in adaptation and adherence.
 - Long sample gaps cannot create hours of false focus or stacked reminders.
 - First-run tutorial and Questions, comments & concerns are built into the product.
+
+## M2 progress (DWA OS / Body lane)
+
+- `body.py`: consent store, robust baseline (median + MAD), confidence label, personal threshold, inaccurate widening, revocation deletes baseline.
+- `VisionSampler` accepts a personal threshold; `run --vision` uses it when calibrated.
+- CLI: `vision consent`, `vision calibrate`, `vision baseline`. UI: DWA OS → Body.
+- Remaining: calibrate on real Windows hardware, record the confidence seen in practice, and route the posture reminder popup's "inaccurate" answer into the same store.
 
 ## What remains before M0 can be called complete
 

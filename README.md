@@ -73,7 +73,31 @@ python -m deep_work_assistant run --vision
 
 Raw frames are processed in memory and discarded. Stored vision events contain sanitized metrics only.
 
-DWA does **not** yet learn a personal posture baseline. Current posture alerts use a generic fixed threshold sustained across recent samples. Consent-driven calibration is a separate milestone.
+Personal posture calibration is consent-gated:
+
+```bash
+python -m deep_work_assistant vision consent grant
+python -m deep_work_assistant vision calibrate        # sit upright; 8 local samples
+python -m deep_work_assistant vision baseline         # show | clear | inaccurate
+```
+
+Calibration stores a median neutral angle, its spread, and a confidence label in `~/.deep_work_assistant/body_profile.json`. Alerts then fire at your neutral plus a margin, not at the generic 25°. "That alert was wrong" widens the threshold. Revoking consent deletes the baseline. Without consent, the generic threshold is unchanged.
+
+## Who did the work: human vs AI attribution
+
+DWA credits only **your** hands-on time. If the [Hermes Companion](https://github.com/hermz580/hermes-companion) plugin is installed, `run` also reads its signed, content-free agent log (`<HERMES_HOME>/companion/events.jsonl`). It checks every record's signature and never writes to the log. Every stretch of a session is attributed to one of three buckets:
+
+- **You alone**: real keyboard/mouse input, no agent working.
+- **Both at once**: you worked while Hermes worked too. This counts as yours.
+- **AI alone**: Hermes (or another agent changing windows) worked with no human input.
+
+Only the first two count toward focus, streaks and reminder clocks. Sessions also record what the agent did (`agent_work`, for example `hermes:terminal`). DWA OS → Evidence shows the split, and Obsidian notes include it. Without the plugin, DWA falls back to window-change detection. `run --no-hermes` turns the bridge off.
+
+## DWA OS (preview)
+
+`deep-work-ui --os` (or `http://127.0.0.1:8791/os`) opens DWA OS, a calmer shell built around the mission loop: **Sense → Model → Act**. Apps: Today (one next right action), Focus, Body, Board, Recover, Evidence, System. It uses the same local APIs and loads nothing from the network. The classic Command Center stays at `/` until DWA OS passes Windows acceptance.
+
+**Body** is the real camera helper: consent, a framing preview that never leaves the browser, calibration, a live posture trend against your threshold, an estimated head-load figure (Hansraj curve, labeled as an estimate), and height-scaled workstation starting points. It carries over the useful ideas from the KinePost concept (`hermz580/dwa-cam-helper-`) without its mock analyses or cloud image upload.
 
 ## Command Center
 
@@ -116,7 +140,7 @@ The CI workflow runs unit/integration checks, simulation, diagnostics, and wheel
 - DWA is a localhost browser application, not a native Windows shell.
 - The UI-managed assistant and a separately started CLI assistant do not yet share a cross-process singleton lock.
 - Manual timer sessions and automatic activity sessions are separate ledgers.
-- Vision setup is command-line only and posture is uncalibrated.
+- Vision install and model provisioning are command-line only; calibration works from the CLI or DWA OS.
 - The fullscreen stretch overlay covers the primary monitor only.
 - Windows notifications, foreground capture, silent bootstrap, and restart persistence still need a clean Windows 11 acceptance run.
 

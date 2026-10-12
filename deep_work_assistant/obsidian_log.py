@@ -73,9 +73,19 @@ def append_session_log(
     # --- Human vs agent activity split ---
     human_s = int(getattr(summary, 'human_active_seconds', 0) or 0)
     agent_s = int(getattr(summary, 'agent_active_seconds', 0) or 0)
-    if agent_s > 0:
+    together_s = int(getattr(summary, 'together_seconds', 0) or 0)
+    if agent_s > 0 or together_s > 0:
         section_lines.append(f'> **human active:** {_format_duration(human_s)} 🧑')
+        if together_s > 0:
+            section_lines.append(f'> **you + agent together:** {_format_duration(together_s)} 🤝')
         section_lines.append(f'> **agent active:** {_format_duration(agent_s)} 🤖')
+        agent_work = getattr(summary, 'agent_work', None) or {}
+        if agent_work:
+            parts = ', '.join(
+                f'{who} {_format_duration(int(seconds))}'
+                for who, seconds in sorted(agent_work.items(), key=lambda item: -item[1])
+            )
+            section_lines.append(f'> **agent work:** {parts}')
 
     # --- Idle indicator ---
     idle = summary.average_idle_seconds

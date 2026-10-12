@@ -24,7 +24,7 @@ Session Intelligence reports saved session duration, human/agent activity, end r
 
 ## 6. Understand posture limits
 
-Vision requires explicit installation, model provisioning, and `--vision` opt-in. Raw frames are discarded. Current posture alerts use generic sustained thresholds. DWA does not yet have a personal posture baseline.
+Vision requires explicit installation, model provisioning, and `--vision` opt-in. Raw frames are discarded. Without consent and calibration, posture alerts use a generic sustained threshold. With consent, calibration learns your neutral angle and alerts at a personal threshold; reporting an alert as inaccurate widens it, and revoking consent deletes it.
 
 ## 7. Ask for help
 
