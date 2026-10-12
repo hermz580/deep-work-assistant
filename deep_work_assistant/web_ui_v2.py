@@ -22,6 +22,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from .body import BodyProfileStore, body_summary, run_calibration
 from .diagnostics import collect_diagnostics
 from .history import HistoryStore
 from .kanban import KanbanBoard
@@ -131,9 +132,15 @@ def _clamp_float(value: Any, low: float, high: float, default: float) -> float:
 class EnhancedAppState(AppState):
     """UI-managed assistant process with persisted launch options and log tail."""
 
-    def __init__(self, settings: SettingsStore | None = None) -> None:
+    def __init__(
+        self,
+        settings: SettingsStore | None = None,
+        body: BodyProfileStore | None = None,
+    ) -> None:
         super().__init__()
         self.settings_store = settings or SettingsStore()
+        self.body_store = body or BodyProfileStore()
+        self.calibration_lock = threading.Lock()
         self.log_path = ASSISTANT_LOG_PATH
         self._log_handle: Any = None
         self.last_command: list[str] = []
@@ -256,6 +263,9 @@ class EnhancedHandler(CommandCenterHandler):
         if path == "/api/settings":
             self._send_json(self.enhanced_state.settings_store.load())
             return
+        if path == "/api/body":
+            self._send_json(body_summary(self.enhanced_state.body_store))
+            return
         if path == "/api/diagnostics":
             self._send_json(self._diagnostics_payload())
             return
@@ -275,6 +285,31 @@ class EnhancedHandler(CommandCenterHandler):
             return
         super().do_GET()
 
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if not path.startswith("/api/body/"):
+            super().do_POST()
+            return
+        payload = self._read_json()
+        if payload is None:
+            return
+        store = self.enhanced_state.body_store
+        try:
+            if path == "/api/body/consent":
+                store.set_consent(payload.get("granted") is True)
+            elif path == "/api/body/inaccurate":
+                store.report_inaccurate()
+            elif path == "/api/body/calibrate":
+                self._calibrate(payload)
+                return
+            else:
+                self._send_error(HTTPStatus.NOT_FOUND, "Unknown endpoint")
+                return
+        except (ValueError, TypeError) as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        self._send_json(body_summary(store))
+
     def do_PATCH(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/settings":
@@ -283,7 +318,48 @@ class EnhancedHandler(CommandCenterHandler):
                 return
             self._send_json(self.enhanced_state.settings_store.save(payload))
             return
+        if path == "/api/body/profile":
+            payload = self._read_json()
+            if payload is None:
+                return
+            store = self.enhanced_state.body_store
+            try:
+                store.update_profile(
+                    height_cm=payload.get("height_cm"),
+                    workstation=payload.get("workstation"),
+                )
+            except (ValueError, TypeError) as exc:
+                self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._send_json(body_summary(store))
+            return
         super().do_PATCH()
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path == "/api/body/baseline":
+            store = self.enhanced_state.body_store
+            store.clear_baseline()
+            self._send_json(body_summary(store))
+            return
+        super().do_DELETE()
+
+    def _calibrate(self, payload: dict[str, Any]) -> None:
+        state = self.enhanced_state
+        if not state.calibration_lock.acquire(blocking=False):
+            self._send_error(HTTPStatus.CONFLICT, "a calibration is already running")
+            return
+        try:
+            run_calibration(state.body_store, samples=int(payload.get("samples") or 8))
+        except PermissionError as exc:
+            self._send_error(HTTPStatus.FORBIDDEN, str(exc))
+            return
+        except (RuntimeError, ValueError) as exc:
+            self._send_error(HTTPStatus.CONFLICT, str(exc))
+            return
+        finally:
+            state.calibration_lock.release()
+        self._send_json(body_summary(state.body_store))
 
     def _dashboard_payload(self) -> dict[str, Any]:
         payload = super()._dashboard_payload()
@@ -305,13 +381,19 @@ class EnhancedHandler(CommandCenterHandler):
 
     def _serve_static(self, request_path: str) -> None:
         relative = "index.html" if request_path in ("", "/") else request_path.lstrip("/")
-        if relative in {"app.v2.css", "app.v2.js"}:
+        if relative in {"os", "os/"}:
+            relative = "os.html"
+        if relative in {"app.v2.css", "app.v2.js", "os.html", "os.css", "os.js"}:
             file_path = UI_DIR / relative
             if not file_path.exists():
                 self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"UI asset missing: {relative}")
                 return
             content = file_path.read_bytes()
-            content_type = "text/css" if relative.endswith(".css") else "text/javascript"
+            content_type = {
+                ".css": "text/css",
+                ".js": "text/javascript",
+                ".html": "text/html",
+            }[Path(relative).suffix]
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", f"{content_type}; charset=utf-8")
             self.send_header("Content-Length", str(len(content)))
@@ -372,6 +454,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1", help="Bind address; localhost by default")
     parser.add_argument("--port", type=int, default=8791, help="Local web port")
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser automatically")
+    parser.add_argument("--os", action="store_true", help="Open the DWA OS shell preview (/os) instead of the classic board")
     return parser
 
 
@@ -380,13 +463,14 @@ def main(argv: list[str] | None = None) -> int:
     settings = SettingsStore()
     state = EnhancedAppState(settings)
     url = f"http://{args.host}:{args.port}"
+    open_url = f"{url}/os" if args.os else url
     try:
         server = EnhancedServer((args.host, args.port), state)
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE and _existing_server_is_healthy(url):
             print(f"[focus-command-center] reusing existing instance at {url}")
             if not args.no_browser:
-                webbrowser.open(url)
+                webbrowser.open(open_url)
             return 0
         raise
     print(f"[focus-command-center] running at {url}")
@@ -397,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             print(f"[focus-command-center] assistant auto-start failed: {exc}")
     if not args.no_browser:
-        threading.Timer(0.35, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.35, lambda: webbrowser.open(open_url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

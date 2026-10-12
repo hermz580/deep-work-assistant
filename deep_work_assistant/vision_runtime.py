@@ -16,7 +16,13 @@ import math
 from threading import Event
 from typing import Any, Callable
 
-from .vision import DEFAULT_WINDOW, classify_activity, posture_alert, run_check
+from .vision import (
+    DEFAULT_FWD_HEAD_THRESHOLD,
+    DEFAULT_WINDOW,
+    classify_activity,
+    posture_alert,
+    run_check,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,7 @@ class VisionSampler:
         check_fn: Callable[..., dict[str, Any]] = run_check,
         sample_interval_seconds: float = 60.0,
         frame_interval_seconds: float = 0.4,
+        posture_threshold: float = DEFAULT_FWD_HEAD_THRESHOLD,
     ) -> None:
         self._check_fn = check_fn
         self._cancel_event = Event()
@@ -68,6 +75,11 @@ class VisionSampler:
         if not math.isfinite(frame_interval) or not 0.1 <= frame_interval <= 5.0:
             raise ValueError("vision frame interval must be between 0.1 and 5 seconds")
         self.frame_interval_seconds = frame_interval
+        threshold = float(posture_threshold)
+        if not math.isfinite(threshold) or not 5.0 <= threshold <= 90.0:
+            raise ValueError("posture threshold must be between 5 and 90 degrees")
+        # Generic by default; a calibrated personal baseline supplies its own.
+        self.posture_threshold = threshold
         self._last_attempt_at: datetime | None = None
         self._posture_window: deque[float | None] = deque(maxlen=DEFAULT_WINDOW)
         self._posture_alert_latched = False
@@ -167,7 +179,10 @@ class VisionSampler:
             self._posture_alert_latched = False
         fwd_head = posture.get("fwd_head_deg") if posture else None
         self._posture_window.append(fwd_head)
-        sustained_bad_posture = posture_alert(list(self._posture_window))
+        sustained_bad_posture = posture_alert(
+            list(self._posture_window),
+            threshold=self.posture_threshold,
+        )
         should_alert = sustained_bad_posture and not self._posture_alert_latched
         self._posture_alert_latched = sustained_bad_posture
         return VisionObservation(

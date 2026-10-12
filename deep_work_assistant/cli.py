@@ -110,6 +110,15 @@ def build_parser() -> argparse.ArgumentParser:
         help='Explicitly download and checksum-verify the local pose model',
     )
     vp.set_defaults(vision_func=_vision_provision)
+    vcon = vision_sub.add_parser('consent', help='Grant or revoke posture-guidance consent')
+    vcon.add_argument('decision', choices=['grant', 'revoke', 'show'])
+    vcon.set_defaults(vision_func=_vision_consent)
+    vcal = vision_sub.add_parser('calibrate', help='Sit in your neutral posture and learn a personal baseline')
+    vcal.add_argument('--samples', type=int, default=8, help='Local posture samples to take (5-20)')
+    vcal.set_defaults(vision_func=_vision_calibrate)
+    vbase = vision_sub.add_parser('baseline', help='Show, clear, or correct the personal posture baseline')
+    vbase.add_argument('action', choices=['show', 'clear', 'inaccurate'], nargs='?', default='show')
+    vbase.set_defaults(vision_func=_vision_baseline)
 
     # ── Kanban board ──
     sub.add_parser('board', help='Show the Kanban board')
@@ -264,6 +273,64 @@ def _vision_provision(args) -> int:
     return 0
 
 
+def _vision_consent(args) -> int:
+    """Explicit, revocable consent for posture guidance (metrics only)."""
+    from .body import BodyProfileStore
+
+    store = BodyProfileStore()
+    if args.decision == 'grant':
+        store.set_consent(True)
+        print('posture consent granted: local metrics only; frames are never stored or uploaded')
+    elif args.decision == 'revoke':
+        store.set_consent(False)
+        print('posture consent revoked: personal baseline deleted')
+    consent = store.load()['consent']
+    print(f"consent      : {'granted' if consent['granted'] else 'not granted'}")
+    return 0
+
+
+def _vision_calibrate(args) -> int:
+    """Learn a personal neutral-posture baseline from local samples."""
+    from .body import BodyProfileStore, personal_threshold, run_calibration
+
+    store = BodyProfileStore()
+    if not store.load()['consent']['granted']:
+        print('consent required first: deep-work-assistant vision consent grant')
+        return 1
+    print('sit back in your comfortable, upright working posture; sampling now...')
+    try:
+        baseline = run_calibration(store, samples=args.samples)
+    except (RuntimeError, ValueError) as exc:
+        print(f'calibration failed: {exc}')
+        return 1
+    print(f"neutral forward-head : {baseline['fwd_head_median']} deg (spread {baseline['fwd_head_spread']})")
+    print(f"samples / confidence : {baseline['samples']} / {baseline['confidence']}")
+    print(f"personal threshold   : {personal_threshold(baseline)} deg")
+    return 0
+
+
+def _vision_baseline(args) -> int:
+    """Show, clear, or widen the personal posture baseline."""
+    from .body import BodyProfileStore
+
+    store = BodyProfileStore()
+    if args.action == 'clear':
+        store.clear_baseline()
+        print('personal baseline cleared; generic threshold restored')
+    elif args.action == 'inaccurate':
+        store.report_inaccurate()
+        print('recorded: last posture alert was inaccurate; threshold widened')
+    profile = store.load()
+    baseline = profile['baseline'] if profile['consent']['granted'] else None
+    if baseline:
+        print(f"baseline     : {baseline['fwd_head_median']} deg ({baseline['confidence']} confidence, "
+              f"{baseline['samples']} samples)")
+    else:
+        print('baseline     : none (generic threshold in use)')
+    print(f"threshold    : {store.threshold()} deg")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -276,7 +343,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == 'vision':
         if not getattr(args, 'vision_command', None):
-            print('error: vision requires a subcommand (status | check | provision)')
+            print('error: vision requires a subcommand '
+                  '(status | check | provision | consent | calibrate | baseline)')
             return 1
         return args.vision_func(args)
 
@@ -326,10 +394,18 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"Local storage: {'ready' if diagnostics['checks']['storage_writable'] else 'blocked'}")
             print(f"UI assets: {'ready' if diagnostics['checks']['ui_assets'] else 'missing'}")
-            print(
-                'Posture personalization: not implemented '
-                '(optional vision uses a generic, uncalibrated threshold)'
-            )
+            from .body import BodyProfileStore
+
+            body_profile = BodyProfileStore().load()
+            if body_profile['consent']['granted'] and body_profile['baseline']:
+                personalization = (
+                    f"calibrated ({body_profile['baseline']['confidence']} confidence)"
+                )
+            elif body_profile['consent']['granted']:
+                personalization = 'consented, not calibrated (run: vision calibrate)'
+            else:
+                personalization = 'off (generic threshold; run: vision consent grant)'
+            print(f'Posture personalization: {personalization}')
         return 0
 
     # ── Kanban board ──
@@ -866,14 +942,22 @@ def run_live_loop(
 
     vision_sampler = None
     if vision_enabled:
+        from .body import BodyProfileStore
         from .vision import camera_available
         from .vision_runtime import BackgroundVisionSampler, VisionSampler
 
+        body_store = BodyProfileStore()
+        posture_threshold = body_store.threshold()
         vision_sampler = BackgroundVisionSampler(
             VisionSampler(
                 sample_interval_seconds=vision_sample_interval,
                 frame_interval_seconds=vision_frame_interval,
+                posture_threshold=posture_threshold,
             )
+        )
+        source = 'personal baseline' if body_store.load()['baseline'] else 'generic'
+        print(
+            f'[deep-work-assistant] posture threshold: {posture_threshold:g} deg ({source})'
         )
         vision_ready, vision_reason = camera_available()
         status = 'ready' if vision_ready else f'degraded: {vision_reason}'

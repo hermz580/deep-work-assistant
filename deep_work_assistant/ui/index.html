@@ -123,7 +123,7 @@
               <details><summary>What triggers the stretch overlay?</summary><p>Two accepted, consecutive stretch skips trigger a 60-second fullscreen overlay on the primary monitor. A response that does not match an active reminder no longer changes the skip count.</p></details>
               <details><summary>What counts toward a streak?</summary><p>A completed automatic session needs at least ten minutes of human-active time and must not be agent-dominated. A missed day resets the current streak display.</p></details>
               <details><summary>What information stays local?</summary><p>Session history, board cards, reminder outcomes, settings, and optional vision metrics stay on this machine. Raw camera frames are discarded. Optional voice uses an online TTS service when enabled.</p></details>
-              <details><summary>Does posture sensing learn my body?</summary><p>No. Optional vision currently uses a generic, uncalibrated threshold after explicit command-line opt-in. Personal posture calibration is a later milestone.</p></details>
+              <details><summary>Does posture sensing learn my body?</summary><p>Only if you ask it to. After explicit consent (DWA OS → Body, or <code>vision consent grant</code>), a short local calibration learns your neutral posture and sets a personal alert threshold. Without consent, optional vision uses the generic threshold. Only angles are stored; frames are discarded.</p></details>
             </div>
           </article>
           <form class="glass-panel support-panel" id="supportForm"><div><p class="eyebrow">LOCAL SUPPORT NOTE</p><h2>Prepare a useful report</h2><p>Nothing is sent automatically. Review the note before posting it. Opening GitHub leaves this local interface.</p></div>
