@@ -382,3 +382,31 @@ def test_calibrate_route_reports_camera_faults_instead_of_dropping(server, monke
         _call(f"{url}/api/body/calibrate", "POST", {"samples": 5})
     assert fault.value.code == 500
     assert "libEGL" in json.loads(fault.value.read().decode())["error"]
+
+
+def test_posture_popup_offers_not_accurate_and_others_do_not() -> None:
+    from deep_work_assistant.interactive_popup import build_popup_script
+
+    posture = build_popup_script("posture", "Sit back")
+    assert "Not accurate" in posture and "respond('inaccurate')" in posture
+    compile(posture, "<popup>", "exec")
+    assert "Posture check" in posture
+    hydration = build_popup_script("hydration", "Drink")
+    compile(hydration, "<popup>", "exec")
+
+
+def test_inaccurate_popup_answer_widens_live_threshold(tmp_path: Path) -> None:
+    from deep_work_assistant import cli
+
+    store = BodyProfileStore(tmp_path / "body.json")
+    store.set_consent(True)
+    store.save_baseline(compute_baseline([_posture(10)] * 8))
+
+    class Live:
+        sampler = VisionSampler(check_fn=lambda **_: {}, posture_threshold=20.0)
+
+    cli._handle_posture_response("inaccurate", Live, store)
+    assert Live.sampler.posture_threshold == 23.0
+    assert store.load()["inaccurate_reports"] == 1
+    cli._handle_posture_response("confirmed", Live, store)
+    assert store.load()["inaccurate_reports"] == 1
