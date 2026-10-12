@@ -223,6 +223,43 @@ def camera_available() -> tuple[bool, str]:
     return True, ""
 
 
+_MODEL_CHECK_CACHE: dict[tuple[str, int, int], bool] = {}
+
+
+def model_ready(model_path: Path | None = None) -> bool:
+    """True when the pinned pose model is present and its checksum matches."""
+    path = model_path or (model_cache_dir() / POSE_MODEL_FILENAME)
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    if stat.st_size <= 1000:
+        return False
+    key = (str(path), stat.st_size, int(stat.st_mtime_ns))
+    if key not in _MODEL_CHECK_CACHE:
+        _MODEL_CHECK_CACHE.clear()
+        _MODEL_CHECK_CACHE[key] = _file_sha256(path) == POSE_MODEL_SHA256
+    return _MODEL_CHECK_CACHE[key]
+
+
+def vision_readiness() -> dict:
+    """What stands between this machine and posture sampling.
+
+    ``step`` names the next action: ``install`` (Python packages),
+    ``provision`` (one-time model download), or None when ready.
+    Never opens the camera.
+    """
+    libraries, reason = camera_available()
+    if not libraries:
+        return {"ready": False, "libraries": False, "model": False, "step": "install", "reason": reason}
+    if not model_ready():
+        return {
+            "ready": False, "libraries": True, "model": False, "step": "provision",
+            "reason": "pose model not downloaded yet (one-time, about 9 MB)",
+        }
+    return {"ready": True, "libraries": True, "model": True, "step": None, "reason": ""}
+
+
 def grab_frame(cam_index: int = 0):
     """Open the camera for one frame and release immediately."""
     cv2 = _load_cv2()
@@ -321,7 +358,13 @@ def run_check(cam_index: int = 0, interval: float = 2.0, cancel_event=None) -> d
         min_pose_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     )
-    landmarker = mp_vision.PoseLandmarker.create_from_options(options)
+    try:
+        landmarker = mp_vision.PoseLandmarker.create_from_options(options)
+    except Exception as exc:  # native runtime failures (GPU/EGL/driver), not just imports
+        return {
+            "available": False, "motion": None, "posture": None,
+            "error": f"pose model could not start on this machine: {exc}",
+        }
     try:
         motion_ok, motion = probe_motion(
             cam_index,
@@ -336,7 +379,11 @@ def run_check(cam_index: int = 0, interval: float = 2.0, cancel_event=None) -> d
                     "error": "camera open but no frame delivered"}
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = landmarker.detect(mp_image)
+        try:
+            result = landmarker.detect(mp_image)
+        except Exception as exc:
+            return {"available": False, "motion": None, "posture": None,
+                    "error": f"pose detection failed: {exc}"}
 
         posture = None
         if result.pose_landmarks:

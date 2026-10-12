@@ -42,6 +42,13 @@ try {
         Write-LaunchLog "installing project dependencies"
         & $python -m pip install --disable-pip-version-check -e $repoRoot *>> $logPath
         if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed. See $logPath" }
+        # Optional camera support for the Body app. Posture sampling stays off
+        # until the user consents; a failure here never blocks the core app.
+        Write-LaunchLog "installing optional camera support"
+        & $python -m pip install --disable-pip-version-check -e ($repoRoot + "[vision]") *>> $logPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-LaunchLog "camera support unavailable on this Python; core features still work"
+        }
         Set-Content -Path $fingerprintPath -Value $pyprojectHash
     }
 

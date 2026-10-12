@@ -156,6 +156,7 @@ class EnhancedAppState(AppState):
             {
                 "log_path": str(self.log_path),
                 "command": list(self.last_command),
+                "posture_sampling": status["running"] and "--vision" in self.last_command,
                 "recent_log": self.tail_log(30),
             }
         )
@@ -191,6 +192,10 @@ class EnhancedAppState(AppState):
                 command.append("--voice-pre-announce")
             if settings["obsidian_vault"]:
                 command.extend(["--obsidian-vault", settings["obsidian_vault"]])
+            # Posture sampling follows consent: on only after the user granted
+            # it in Body and the camera stack is installed and provisioned.
+            if self.posture_sampling_ready():
+                command.append("--vision")
 
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             self._log_handle = self.log_path.open("a", encoding="utf-8", buffering=1)
@@ -214,6 +219,14 @@ class EnhancedAppState(AppState):
             self.assistant_started_at = datetime.now(timezone.utc).isoformat()
             self.last_command = command
             return self.assistant_status()
+
+    def posture_sampling_ready(self) -> bool:
+        from .vision import vision_readiness
+
+        return bool(
+            self.body_store.load()["consent"]["granted"]
+            and vision_readiness()["ready"]
+        )
 
     def stop_assistant(self) -> dict[str, Any]:
         with self.lock:
@@ -308,6 +321,9 @@ class EnhancedHandler(CommandCenterHandler):
             elif path == "/api/body/calibrate":
                 self._calibrate(payload)
                 return
+            elif path == "/api/body/provision":
+                self._provision()
+                return
             else:
                 self._send_error(HTTPStatus.NOT_FOUND, "Unknown endpoint")
                 return
@@ -350,6 +366,24 @@ class EnhancedHandler(CommandCenterHandler):
             return
         super().do_DELETE()
 
+    def _provision(self) -> None:
+        """Explicit, user-clicked network step: fetch and verify the pose model."""
+        from . import vision
+
+        if not vision.camera_available()[0]:
+            self._send_error(HTTPStatus.CONFLICT, vision.camera_available()[1])
+            return
+        try:
+            vision.ensure_model(
+                vision.model_cache_dir() / vision.POSE_MODEL_FILENAME,
+                url=vision.POSE_MODEL_URL,
+                expected_sha256=vision.POSE_MODEL_SHA256,
+            )
+        except Exception as exc:  # network, checksum, or disk failure
+            self._send_error(HTTPStatus.BAD_GATEWAY, f"model download failed: {exc}")
+            return
+        self._send_json(body_summary(self.enhanced_state.body_store))
+
     def _calibrate(self, payload: dict[str, Any]) -> None:
         state = self.enhanced_state
         if not state.calibration_lock.acquire(blocking=False):
@@ -362,6 +396,9 @@ class EnhancedHandler(CommandCenterHandler):
             return
         except (RuntimeError, ValueError) as exc:
             self._send_error(HTTPStatus.CONFLICT, str(exc))
+            return
+        except Exception as exc:  # never drop the connection on a camera fault
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"camera error: {exc}")
             return
         finally:
             state.calibration_lock.release()

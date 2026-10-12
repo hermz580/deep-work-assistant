@@ -924,7 +924,11 @@ def run_live_loop(
     desktop_notifier = DesktopNotifier(dry_run=dry_run)
     voice_notifier = VoiceNotifier(enabled=voice_enabled, dry_run=dry_run)
     notifier = ChainedNotifier(desktop_notifier, voice_notifier, pre_announce=voice_pre_announce)
-    probe = WindowsActivityProbe()
+    try:
+        probe = WindowsActivityProbe()
+    except RuntimeError as exc:
+        print(f'[deep-work-assistant] {exc}')
+        return 2
     recent = history.load_recent()
     plan = build_adaptive_plan(recent)
     laptop_profile = analyze_laptop_use(recent)

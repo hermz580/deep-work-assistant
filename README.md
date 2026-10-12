@@ -8,7 +8,8 @@ Version 0.5.0 is an integration alpha. The engine, Command Center, board, analyt
 
 1. Clone or download this repository.
 2. Double-click `Launch Deep Work Assistant.vbs`.
-3. On the first run, DWA creates `.venv`, installs the core package, runs its readiness check, and opens the local Command Center.
+3. On the first run, DWA creates `.venv`, installs the core package and (best effort) camera support, runs its readiness check, and opens the local Command Center.
+4. For posture guidance, open DWA OS → **Body**, press **I consent**, press **Download pose model** (one time, about 9 MB, checksum-verified), and **Calibrate**. From then on, **Start Assistant** samples posture automatically. Without consent it never does.
 
 The daily launcher is silent: it does not keep a terminal window open. If setup fails, it shows the error and points to `%LOCALAPPDATA%\DeepWorkAssistant\bootstrap.log`.
 
@@ -140,7 +141,7 @@ The CI workflow runs unit/integration checks, simulation, diagnostics, and wheel
 - DWA is a localhost browser application, not a native Windows shell.
 - The UI-managed assistant and a separately started CLI assistant do not yet share a cross-process singleton lock.
 - Manual timer sessions and automatic activity sessions are separate ledgers.
-- Vision install and model provisioning are command-line only; calibration works from the CLI or DWA OS.
+- Camera support installs best-effort from the launcher; if mediapipe has no wheel for your Python, core features still work and Body says what is missing.
 - The fullscreen stretch overlay covers the primary monitor only.
 - Windows notifications, foreground capture, silent bootstrap, and restart persistence still need a clean Windows 11 acceptance run.
 

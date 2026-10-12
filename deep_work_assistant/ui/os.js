@@ -243,9 +243,13 @@
     });
     $("consentGrant").hidden = consented;
     $("consentRevoke").hidden = !consented;
-    $("cameraReadiness").textContent = body.camera.ready
-      ? "Camera path ready on this machine."
-      : `Camera path not ready: ${body.camera.reason}. Install with pip install -e ".[vision]" then run: deep-work-assistant vision provision.`;
+    const cam = body.camera;
+    $("cameraReadiness").textContent = cam.ready
+      ? (consented ? "Camera ready. Posture sampling turns on the next time you start the assistant." : "Camera ready on this machine.")
+      : cam.step === "provision"
+        ? "Camera libraries installed. One step left: download the pose model (the only network step; it is checksum-verified)."
+        : `Camera libraries not installed: ${cam.reason}. Relaunch DWA to let setup install them, or run: pip install -e ".[vision]".`;
+    $("provisionCamera").hidden = cam.step !== "provision";
     $("calibrate").disabled = !consented;
     $("clearBaseline").hidden = !body.calibrated;
     const b = body.baseline;
@@ -331,6 +335,20 @@
   });
   $("clearBaseline").addEventListener("click", () => bodyCall("/api/body/baseline", "DELETE").then(() => toast("Baseline reset; generic threshold restored.")).catch((e) => toast(e.message)));
   $("inaccurate").addEventListener("click", () => bodyCall("/api/body/inaccurate").then(() => toast("Thanks — alerts will be a little less sensitive.")).catch((e) => toast(e.message)));
+  $("provisionCamera").addEventListener("click", async () => {
+    const button = $("provisionCamera");
+    button.disabled = true;
+    button.textContent = "Downloading…";
+    try {
+      await bodyCall("/api/body/provision");
+      toast("Pose model downloaded and verified.");
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Download pose model (one-time, ~9 MB)";
+    }
+  });
   $("calibrate").addEventListener("click", async () => {
     stopPreview(); // the Python probe needs the camera; release the browser's hold first
     const button = $("calibrate");
@@ -477,7 +495,9 @@
   // ── system ───────────────────────────────────────────────
   function renderSystem() {
     const a = state.dash.assistant || {};
-    $("assistantLine").textContent = a.running ? `Running · pid ${a.pid} · since ${when(a.started_at)}` : "Stopped";
+    $("assistantLine").textContent = a.running
+      ? `Running · pid ${a.pid} · since ${when(a.started_at)} · posture sampling ${a.posture_sampling ? "on" : "off"}`
+      : "Stopped";
     $("assistantToggle").textContent = a.running ? "Stop assistant" : "Start assistant";
     $("assistantLog").textContent = (a.recent_log || []).join("\n") || "No log yet.";
     const d = state.dash.diagnostics || {};
