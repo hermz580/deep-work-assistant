@@ -4,14 +4,31 @@ Deep Work Assistant (DWA) is a local-first Windows focus and recovery companion.
 
 Version 0.5.0 is an integration alpha. The engine, Command Center, board, analytics, reminder responses, stretch escalation, and privacy-gated vision sampling exist. The current milestone is making them install, launch, report, and recover through one truthful path.
 
-## Start on Windows
+## Install on your Windows laptop (one line)
 
-1. Clone or download this repository.
-2. Double-click `Launch Deep Work Assistant.vbs`.
-3. On the first run, DWA creates `.venv`, installs the core package and (best effort) camera support, runs its readiness check, and opens the local Command Center.
-4. For posture guidance, open DWA OS → **Body**, press **I consent**, press **Download pose model** (one time, about 9 MB, checksum-verified), and **Calibrate**. From then on, **Start Assistant** samples posture automatically. Without consent it never does.
+Open **PowerShell** (Start menu, type "PowerShell") and paste:
 
-The daily launcher is silent: it does not keep a terminal window open. If setup fails, it shows the error and points to `%LOCALAPPDATA%\DeepWorkAssistant\bootstrap.log`.
+```powershell
+irm https://raw.githubusercontent.com/hermz580/deep-work-assistant/main/scripts/install_windows.ps1 | iex
+```
+
+That's it. It needs no admin rights and no git. It:
+
+1. finds Python 3.11 or newer, or installs Python 3.12 just for you (winget, else python.org);
+2. downloads DWA into `%LOCALAPPDATA%\DeepWorkAssistant\app`;
+3. builds its private `.venv`, installs the app and (best effort) camera support, and runs the readiness check;
+4. adds **Deep Work Assistant** and **DWA OS** shortcuts to your Desktop and Start Menu;
+5. opens the Command Center at `http://127.0.0.1:8791`.
+
+Options: add `-StartAtLogin` to start DWA when you sign in, or `-NoLaunch` to install without opening it. To pass options, save the script first: `irm <url> -OutFile install.ps1; .\install.ps1 -StartAtLogin`.
+
+**Updating:** run the same line again. It replaces the app files and keeps your `.venv`, `local_config.bat` and all your data (`~\.deep_work_assistant`, `%LOCALAPPDATA%\DeepWorkAssistant`).
+
+Already cloned or downloaded the repo? Double-click `Install Deep Work Assistant.cmd` instead. To run straight from a checkout, double-click `Launch Deep Work Assistant.vbs` (pass `/os` to open DWA OS).
+
+For posture guidance, open DWA OS → **Body**, press **I consent**, then **Download pose model** (one time, about 9 MB, checksum-verified), then **Calibrate**. From then on, **Start Assistant** samples posture automatically. Without consent it never does.
+
+The daily launcher is silent: it does not keep a terminal window open. If setup fails, it shows the error and points to `%LOCALAPPDATA%\DeepWorkAssistant\bootstrap.log`. If the Python environment breaks (for example after a Python upgrade), the launcher rebuilds it.
 
 For a visible troubleshooting launch, run:
 
