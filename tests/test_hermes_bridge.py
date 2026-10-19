@@ -60,6 +60,24 @@ def test_bridge_ignores_bad_lines_and_never_creates_files(tmp_path: Path) -> Non
     assert not (tmp_path / "nope").exists()
 
 
+def test_bridge_rejects_negative_event_timestamps(tmp_path: Path) -> None:
+    record = _sign({"event": "tool.started", "ts": -1.0,
+                    "category": "terminal", "session_id": "s"})
+    bridge = _bridge(tmp_path, [record])
+    assert bridge.refresh() == 0
+    assert bridge.rejected == 1
+
+
+def test_future_dated_busy_event_is_uncertain_not_working(tmp_path: Path) -> None:
+    record = _sign({"event": "tool.started",
+                    "ts": (T0 + timedelta(minutes=10)).timestamp(),
+                    "category": "terminal", "session_id": "s"})
+    bridge = _bridge(tmp_path, [record])
+    status = bridge.status(now=T0)
+    assert status["state"] == "uncertain"
+    assert bridge.busy_seconds(T0, T0 + timedelta(minutes=1)) == 0
+
+
 def test_bridge_reads_only_categories_never_content(tmp_path: Path) -> None:
     record = _sign({"event": "tool.started", "ts": T0.timestamp(), "category": "secret-path/etc",
                     "args": "rm -rf /", "session_id": "s"})

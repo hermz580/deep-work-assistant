@@ -348,6 +348,7 @@ class PomodoroTimer:
         Returns a dict that can be passed to :meth:`restore_state`.
         """
         state: dict[str, Any] = {
+            'phase_completed_emitted': self._phase_completed_emitted,
             'config': {
                 'work_minutes': self.config.work_minutes,
                 'short_break_minutes': self.config.short_break_minutes,
@@ -389,7 +390,7 @@ class PomodoroTimer:
             auto_start_work=cfg.get('auto_start_work', False),
         )
         timer = cls(config)
-        timer._phase_completed_emitted = False
+        timer._phase_completed_emitted = bool(state.get('phase_completed_emitted', False))
 
         sess_data = state.get('session')
         if sess_data:

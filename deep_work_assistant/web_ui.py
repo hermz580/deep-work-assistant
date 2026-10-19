@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from .coordination import atomic_json, timer_transaction, assistant_running
+
 from .analytics import AnalyticsEngine
 from .engine import analyze_laptop_use, build_adaptive_plan, effective_streak, load_streak
 from .history import HistoryStore
@@ -47,6 +49,10 @@ def _to_dict(value: Any) -> Any:
 
 
 def _load_timer() -> PomodoroTimer:
+    with timer_transaction(ACTIVE_POMO_PATH):
+        return _load_timer_locked()
+
+def _load_timer_locked() -> PomodoroTimer:
     if not ACTIVE_POMO_PATH.exists():
         return PomodoroTimer()
     try:
@@ -60,11 +66,7 @@ def _load_timer() -> PomodoroTimer:
 
 
 def _save_timer(timer: PomodoroTimer) -> None:
-    ACTIVE_POMO_PATH.parent.mkdir(parents=True, exist_ok=True)
-    ACTIVE_POMO_PATH.write_text(
-        json.dumps(timer.save_state(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    atomic_json(ACTIVE_POMO_PATH, timer.save_state())
 
 
 def _clear_timer() -> None:
@@ -85,7 +87,7 @@ class AppState:
         if process is not None and not running:
             self.assistant_process = None
         return {
-            "running": running,
+            "running": running or assistant_running(),
             "pid": process.pid if running and process else None,
             "started_at": self.assistant_started_at if running else None,
             "managed_by_ui": running,
@@ -158,7 +160,7 @@ class CommandCenterHandler(BaseHTTPRequestHandler):
             self._send_json({"cards": self._cards_payload()})
             return
         if path == "/api/pomodoro":
-            with self.app_state.lock:
+            with self.app_state.lock, timer_transaction(ACTIVE_POMO_PATH):
                 self._send_json(_load_timer().status())
             return
         self._serve_static(path)
@@ -384,6 +386,13 @@ class CommandCenterHandler(BaseHTTPRequestHandler):
         self._send_json(card.to_dict())
 
     def _pomodoro_start(self, payload: dict[str, Any]) -> None:
+        with timer_transaction(ACTIVE_POMO_PATH):
+            if _load_timer().session is not None:
+                self._send_error(HTTPStatus.CONFLICT, "A pomodoro is already active")
+                return
+            self._pomodoro_start_locked(payload)
+
+    def _pomodoro_start_locked(self, payload: dict[str, Any]) -> None:
         config = PomodoroConfig(
             work_minutes=int(payload.get("work_minutes", 25)),
             short_break_minutes=int(payload.get("short_break_minutes", 5)),
@@ -398,14 +407,14 @@ class CommandCenterHandler(BaseHTTPRequestHandler):
         self._send_json(timer.status(), status=HTTPStatus.CREATED)
 
     def _pomodoro_action(self, action: Callable[[PomodoroTimer], Any]) -> None:
-        with self.app_state.lock:
+        with self.app_state.lock, timer_transaction(ACTIVE_POMO_PATH):
             timer = _load_timer()
             action(timer)
             _save_timer(timer)
             self._send_json(timer.status())
 
     def _pomodoro_stop(self) -> None:
-        with self.app_state.lock:
+        with self.app_state.lock, timer_transaction(ACTIVE_POMO_PATH):
             timer = _load_timer()
             summary = timer.stop()
             card_id = str(summary.get("active_card_id") or "")

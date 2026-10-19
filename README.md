@@ -169,3 +169,20 @@ The CI workflow runs unit/integration checks, simulation, diagnostics, and wheel
 - [Focus Command Center](FOCUS_COMMAND_CENTER.md)
 
 Questions, comments, concerns, accessibility problems, privacy concerns, and bugs can be prepared from **Help & Feedback** inside the Command Center or opened directly in [GitHub Issues](https://github.com/hermz580/deep-work-assistant/issues).
+
+
+### Shared timer and assistant ownership
+
+The CLI and web UI use the same active timer, serialized with an operating-system
+file lock and atomic replacement. Starting a second active timer returns a conflict;
+the CLI polling loop reloads shared state and exits when another client stops it.
+Only one `run` process can own a user profile. The OS releases ownership after a
+crash; a leftover lock file does not prevent restarting. A web UI can report an
+assistant started elsewhere, but only stops its own child process.
+
+Activity records keep unique `session_id` values and include `parent_session_id`.
+When a Pomodoro is active, its ID is the parent; otherwise the observed record is
+its own parent. Timer changes close the current observation at its last sample.
+Planned/timer minutes remain separate from observed human, agent, and overlapping
+activity. Do not add those durations together or deduplicate segments by parent ID.
+Old history records remain readable. Timer state and locks are per OS user profile.
