@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -193,7 +194,8 @@ class HermesBridge:
         ts = payload.get("ts")
         if not isinstance(kind, str) or kind not in BUSY_EVENTS | QUIET_EVENTS:
             return None
-        if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+        if (isinstance(ts, bool) or not isinstance(ts, (int, float))
+                or not math.isfinite(float(ts)) or ts < 0):
             return None
         category = payload.get("category")
         session = payload.get("session_id")
@@ -253,11 +255,20 @@ class HermesBridge:
             self.refresh()
         recent = self._events[-limit:]
         last = self._events[-1] if self._events else None
-        busy = last is not None and last.busy and now.timestamp() - last.ts <= BUSY_HOLD_SECONDS
+        age = now.timestamp() - last.ts if last is not None else None
+        # A future-dated signed record usually means clock skew or a bad
+        # timestamp. It is not evidence that Hermes is currently working.
+        busy = last is not None and last.busy and 0 <= age <= BUSY_HOLD_SECONDS
+        state = (
+            "working" if busy else
+            "uncertain" if age is not None and age < 0 else
+            "quiet" if last is not None else
+            "no events yet"
+        )
         return {
             "connected": connected,
             "events_path": str(self.events_path),
-            "state": "working" if busy else ("quiet" if last else "no events yet"),
+            "state": state,
             "last_event_at": last.to_record()["at"] if last else None,
             "recent": [event.to_record() for event in reversed(recent)],
             "rejected_records": self.rejected,

@@ -317,6 +317,7 @@ class ActiveSession:
     human_active_seconds: int = 0
     agent_active_seconds: int = 0
     together_seconds: int = 0
+    parent_session_id: str | None = None
     agent_work: dict[str, int] = field(default_factory=dict)
     reminders: list[ReminderRecord] = field(default_factory=list)
 
@@ -340,11 +341,13 @@ class SessionSummary:
     # together_seconds is the part of your time when an agent worked too.
     # agent_work maps who/what ("hermes:terminal", "other-agent") to seconds.
     together_seconds: int = 0
+    parent_session_id: str | None = None
     agent_work: dict[str, int] = field(default_factory=dict)
 
     def to_record(self) -> dict[str, Any]:
         return {
             'session_id': self.session_id,
+            'parent_session_id': self.parent_session_id or self.session_id,
             'started_at': _utc_iso(self.started_at),
             'ended_at': _utc_iso(self.ended_at),
             'primary_app': self.primary_app,
@@ -364,6 +367,7 @@ class SessionSummary:
     def from_record(cls, record: dict[str, Any]) -> 'SessionSummary':
         return cls(
             session_id=str(record['session_id']),
+            parent_session_id=record.get('parent_session_id') or str(record['session_id']),
             started_at=_parse_dt(str(record['started_at'])),
             ended_at=_parse_dt(str(record['ended_at'])),
             primary_app=str(record.get('primary_app', '')),
@@ -535,6 +539,7 @@ class DeepWorkAssistant:
         # into agent time or credit agent time to the human.
         self.agent_evidence = agent_evidence
 
+        self.parent_session_id: str | None = None
         self.current_session: ActiveSession | None = None
         self.latest_vision_observation: dict[str, Any] | None = None
         self._previous_sample: ActivitySample | None = None
@@ -736,6 +741,7 @@ class DeepWorkAssistant:
         self.latest_vision_observation = None
         session = ActiveSession(
             session_id=self.session_id_factory(),
+            parent_session_id=self.parent_session_id,
             started_at=sample.captured_at,
             primary_app=sample.process_name,
             last_sample_at=sample.captured_at,
@@ -752,6 +758,7 @@ class DeepWorkAssistant:
                 for stage, minutes in self.reminder_plan.as_stages()
             ],
         )
+        session.parent_session_id = session.parent_session_id or session.session_id
         return session
 
     def _finalize_current_session(self, finished_at: datetime, ended_reason: str) -> SessionSummary:
@@ -792,6 +799,7 @@ class DeepWorkAssistant:
         )
         summary = SessionSummary(
             session_id=session.session_id,
+            parent_session_id=session.parent_session_id,
             started_at=session.started_at,
             ended_at=finished_at,
             primary_app=session.primary_app,

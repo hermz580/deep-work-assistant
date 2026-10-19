@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .coordination import atomic_json, timer_transaction, single_assistant, active_parent
+
 from .engine import (
     ActivitySample,
     DeepWorkAssistant,
@@ -334,6 +336,15 @@ def _vision_baseline(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Redirected Windows stdout otherwise rejects emoji and crashes commands.
+    import sys
+    import signal
+    import threading
+    if hasattr(signal, 'SIGBREAK') and threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command
@@ -688,11 +699,7 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 def _save_active_pomo(timer: PomodoroTimer) -> None:
     """Persist the active pomodoro timer state so subcommands can find it."""
-    _ACTIVE_POMO_PATH.parent.mkdir(parents=True, exist_ok=True)
-    state = timer.save_state()
-    _ACTIVE_POMO_PATH.write_text(
-        __import__('json').dumps(state, indent=2), encoding='utf-8'
-    )
+    atomic_json(_ACTIVE_POMO_PATH, timer.save_state())
 
 
 def _load_active_pomo() -> PomodoroTimer | None:
@@ -718,6 +725,13 @@ def _clear_active_pomo() -> None:
 
 def _handle_pomo_command(args: argparse.Namespace) -> int:
     """Handle pomodoro subcommands."""
+    with timer_transaction(_ACTIVE_POMO_PATH):
+        if args.pomo_command != 'start':
+            return _handle_pomo_command_locked(args)
+    return _handle_pomo_command_locked(args)
+
+
+def _handle_pomo_command_locked(args):
     cmd = args.pomo_command
 
     if cmd == 'start':
@@ -728,8 +742,13 @@ def _handle_pomo_command(args: argparse.Namespace) -> int:
             pomodoros_before_long=args.pomodoros,
         )
         timer = PomodoroTimer(config)
-        timer.start(card_id=args.card)
-        _save_active_pomo(timer)
+        with timer_transaction(_ACTIVE_POMO_PATH):
+            existing = _load_active_pomo()
+            if existing is not None and existing.session is not None:
+                print('A pomodoro is already active. Stop it before starting another.')
+                return 1
+            timer.start(card_id=args.card)
+            _save_active_pomo(timer)
 
         print(f'🍅 Pomodoro session started (work={args.work}m, break={args.short_break}m)')
         session_id = timer.session.session_id if timer.session else '?'
@@ -740,14 +759,22 @@ def _handle_pomo_command(args: argparse.Namespace) -> int:
         try:
             while timer.session is not None:
                 time.sleep(1)
-                now = datetime.now(timezone.utc)
-                events = timer.tick(now)
-                for event in events:
-                    _handle_pomo_event(event, timer)
-                _save_active_pomo(timer)
+                with timer_transaction(_ACTIVE_POMO_PATH):
+                    shared = _load_active_pomo()
+                    if shared is None or shared.session is None or shared.session.session_id != session_id:
+                        break
+                    timer = shared
+                    events = timer.tick(datetime.now(timezone.utc))
+                    for event in events:
+                        _handle_pomo_event(event, timer)
+                    _save_active_pomo(timer)
         except KeyboardInterrupt:
-            summary = timer.stop()
-            _clear_active_pomo()
+            with timer_transaction(_ACTIVE_POMO_PATH):
+                shared = _load_active_pomo()
+                if shared is None or shared.session is None or shared.session.session_id != session_id:
+                    return 0
+                summary = shared.stop()
+                _clear_active_pomo()
             pomos = summary.get('pomodoros_completed', 0)
             total_m = summary.get('total_work_minutes', 0)
             print(f'\n🍅 Pomodoro session ended — {pomos} pomodoros completed ({total_m}m total)')
@@ -903,6 +930,7 @@ def _run_mindful_loop(coach: MindfulnessCoach) -> int:
     return 0
 
 
+@single_assistant
 def run_live_loop(
     *,
     history: HistoryStore,
@@ -997,6 +1025,13 @@ def run_live_loop(
         previous_sample: ActivitySample | None = None
         while True:
             sample = probe.sample()
+            parent = active_parent(_ACTIVE_POMO_PATH)
+            current = assistant.current_session
+            if current is not None and current.parent_session_id != (parent or current.session_id):
+                summary = assistant.finalize_session(current.last_sample_at, ended_reason='timer-changed')
+                if summary:
+                    history.append(summary)
+            assistant.parent_session_id = parent
             events = assistant.process_sample(sample)
 
             if vision_sampler is not None:

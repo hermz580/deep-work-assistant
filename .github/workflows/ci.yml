@@ -29,3 +29,52 @@ jobs:
         run: python -m deep_work_assistant simulate
       - name: Build wheel and source archive
         run: python -m build
+
+  # The real install path on a clean Windows runner, under Windows PowerShell
+  # 5.1 (what a laptop has): install, readiness, launch, reuse, update.
+  windows-install:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick a clean install folder
+        run: '"DWA_DIR=$env:RUNNER_TEMP\dwa-app" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii'
+      - name: Install with the one-line installer (from this checkout)
+        run: |
+          .\scripts\install_windows.ps1 -SourceDir $PWD -InstallDir $env:DWA_DIR -NoLaunch
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: The app environment and shortcuts exist
+        run: |
+          $py = Join-Path $env:DWA_DIR ".venv\Scripts\python.exe"
+          if (-not (Test-Path $py)) { throw "no .venv python" }
+          & $py -m deep_work_assistant doctor --json
+          if ($LASTEXITCODE -ne 0) { throw "doctor failed" }
+          $desktop = [Environment]::GetFolderPath("Desktop")
+          foreach ($name in "Deep Work Assistant.lnk", "DWA OS.lnk") {
+            if (-not (Test-Path (Join-Path $desktop $name))) { throw "missing shortcut $name" }
+          }
+      - name: The silent launcher starts the Command Center and DWA OS
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $env:DWA_DIR "scripts\bootstrap_windows.ps1") -OpenOS
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 2
+            try {
+              $diag = Invoke-WebRequest -Uri "http://127.0.0.1:8791/api/diagnostics" -UseBasicParsing -TimeoutSec 5
+              $os = Invoke-WebRequest -Uri "http://127.0.0.1:8791/os" -UseBasicParsing -TimeoutSec 5
+              if ($diag.StatusCode -eq 200 -and $os.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+          }
+          if (-not $ok) { Get-Content "$env:LOCALAPPDATA\DeepWorkAssistant\bootstrap.log"; throw "UI did not come up" }
+      - name: Re-running the installer updates in place and keeps the venv
+        run: |
+          $marker = Join-Path $env:DWA_DIR ".venv\keep-me"
+          Set-Content $marker "x"
+          .\scripts\install_windows.ps1 -SourceDir $PWD -InstallDir $env:DWA_DIR -NoLaunch
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not (Test-Path $marker)) { throw ".venv was not kept" }
+      - name: Show the setup log
+        if: always()
+        run: Get-Content "$env:LOCALAPPDATA\DeepWorkAssistant\bootstrap.log" -ErrorAction SilentlyContinue
